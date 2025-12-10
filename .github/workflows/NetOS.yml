@@ -1,0 +1,220 @@
+name: HOS Builder
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '源码仓库'
+        required: true
+        default: ''
+        type: string
+      source_branch:
+        description: '源码分支'
+        required: true
+        default: ''
+        type: string
+      target:
+        description: '设备架构'
+        required: true
+        default: 'airoha'
+        type: string
+      subtarget:
+        description: '设备芯片'
+        required: true
+        default: 'an7581'
+        type: string
+      profile:
+        description: '设备型号'
+        required: true
+        default: 'nokia_xg-040g-md'
+        type: string
+      packages:
+        description: '定制软件'
+        required: false
+        default: 'luci-app-adblock luci-app-arpbind luci-app-autoreboot luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-pbr luci-app-ramfree luci-app-usb-printer luci-app-vlmcsd'
+        type: string
+      mac_fix:
+        description: 'MAC固化'
+        required: true
+        default: 'false'
+        type: boolean
+jobs:
+  build-firmware:
+    name: 构建 ${{ github.event.inputs.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.source_repo }}
+          ref: ${{ github.event.inputs.source_branch }}
+      - name: 初始化环境
+        run: |
+          echo "BUILD_TIME=$(date +%y%m%d%H%M)" >> $GITHUB_ENV
+          echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
+          echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
+          echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
+          echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
+          echo "DIST_NAME=HOS QQ83826988" >> $GITHUB_ENV
+          echo "CODE=0595-85590055" >> $GITHUB_ENV
+          cd ${{ github.workspace }}
+          FEEDS_FILE="feeds.conf.default"
+          SOURCE_TYPE="openwrt"
+          if grep -q "immortalwrt" "$FEEDS_FILE" 2>/dev/null; then
+            SOURCE_TYPE="immortalwrt"
+          fi
+          echo "SOURCE_TYPE=$SOURCE_TYPE" >> $GITHUB_ENV
+          CUSTOM_FEEDS=""
+          if [ "$SOURCE_TYPE" = "openwrt" ]; then
+            sed -i \
+                -e 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' \
+                -e 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' \
+                -e 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' \
+                -e 's|https://git.openwrt.org/feed/telephony.git|https://github.com/openwrt/telephony.git|g' \
+                "$FEEDS_FILE"
+            for feed in "custom_packages https://github.com/immortalwrt/packages.git" \
+                        "custom_luci https://github.com/immortalwrt/luci.git"; do
+              feed_name="${feed%% *}"
+              if ! grep -q "^src-git $feed_name\b" "$FEEDS_FILE"; then
+                echo "src-git $feed" >> "$FEEDS_FILE"
+                CUSTOM_FEEDS="$CUSTOM_FEEDS $feed_name"
+              fi
+            done
+            CUSTOM_FEEDS="${CUSTOM_FEEDS# }"
+          fi
+          echo "CUSTOM_FEEDS=\"$CUSTOM_FEEDS\"" >> $GITHUB_ENV
+          FILES_DIR="${{ github.workspace }}/files"
+          UCI_DEFAULTS_DIR="$FILES_DIR/etc/uci-defaults"
+          mkdir -p "$UCI_DEFAULTS_DIR"
+          COMBINED_SCRIPT="$UCI_DEFAULTS_DIR/66-hos-init"
+          > "$COMBINED_SCRIPT"
+          chmod +x "$COMBINED_SCRIPT"
+          printf '#!/bin/sh\n' >> "$COMBINED_SCRIPT"
+          printf 'exec > /tmp/hos-init.log 2>&1\n' >> "$COMBINED_SCRIPT"
+          printf 'set -x\n' >> "$COMBINED_SCRIPT"
+          if [ "${{ github.event.inputs.mac_fix }}" = "true" ]; then
+            printf 'is_valid_mac() {\n    mac="$1"\n    [ -z "$mac" ] && return 1\n    echo "$mac" | grep -qE '\''^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'\'' || return 1\n    [ "$mac" = "00:00:00:00:00:00" ] && return 1\n    [ "$mac" = "ff:ff:ff:ff:ff:ff" ] && return 1\n    first_byte_hex=$(echo "$mac" | cut -d: -f1)\n    first_byte_dec=$((0x$first_byte_hex))\n    [ $((first_byte_dec & 0x01)) -ne 0 ] && return 1\n    return 0\n}\n' >> "$COMBINED_SCRIPT"
+            printf 'WAIT_MAX=30\nWAIT_INTERVAL=3\nelapsed=0\nBASE_MAC=""\n' >> "$COMBINED_SCRIPT"
+            printf 'while [ $elapsed -lt $WAIT_MAX ]; do\n    BASE_MAC=$(ip link show eth0 2>/dev/null | grep link/ether | awk '\''{print $2}'\'')\n    if is_valid_mac "$BASE_MAC"; then\n        echo "eth0 MAC: $BASE_MAC"\n        break\n    fi\n    sleep $WAIT_INTERVAL\n    elapsed=$((elapsed + WAIT_INTERVAL))\ndone\n' >> "$COMBINED_SCRIPT"
+            printf 'if [ -z "$BASE_MAC" ]; then\n    echo "ERROR: Cannot get eth0 MAC"\n    exit 1\nfi\n' >> "$COMBINED_SCRIPT"
+            printf 'last_byte=$(echo "$BASE_MAC" | awk -F: '\''{print $6}'\'')\ndec_last=$((0x$last_byte))\nnext_dec=$(( (dec_last + 1) %% 256 ))\nnext_hex=$(printf "%%02x" $next_dec)\nprefix=$(echo "$BASE_MAC" | cut -d: -f1-5)\nWAN_MAC="${prefix}:${next_hex}"\nLAN_MAC="$BASE_MAC"\necho "Generated WAN MAC: $WAN_MAC, LAN MAC: $LAN_MAC"\n' >> "$COMBINED_SCRIPT"
+            printf 'ip link set dev eth0 address "$LAN_MAC"\n' >> "$COMBINED_SCRIPT"
+            printf 'WAN_DEV=""\nUCI_WAN_DEV=$(uci get network.wan.device 2>/dev/null)\n' >> "$COMBINED_SCRIPT"
+            printf 'if [ -n "$UCI_WAN_DEV" ] && ip link show "$UCI_WAN_DEV" >/dev/null 2>&1; then\n    WAN_DEV="$UCI_WAN_DEV"\n    echo "Using UCI WAN device: $WAN_DEV"\nelse\n    echo "UCI device unavailable or invalid, scanning physical interfaces..."\n    for dev in /sys/class/net/*; do\n        iface=$(basename "$dev")\n        case "$iface" in\n            lo|br-*|vlan*|dummy*|bond*|tun*|tap*|sit*|gre*|gretap*|erspan*|ip6*|ip*|vti*)\n                continue\n                ;;\n        esac\n        [ "$iface" = "eth0" ] && continue\n        if [ -d "$dev/device" ] || [ -L "$dev/phy_device" ]; then\n            WAN_DEV="$iface"\n            echo "Auto-detected WAN device: $WAN_DEV"\n            break\n        fi\n    done\nfi\n' >> "$COMBINED_SCRIPT"
+            printf 'if [ -n "$WAN_DEV" ]; then\n    ip link set dev "$WAN_DEV" address "$WAN_MAC"\n    uci set network.wan.device="$WAN_DEV"\nelse\n    echo "WARNING: No WAN device found. Skipping WAN MAC assignment."\nfi\n' >> "$COMBINED_SCRIPT"
+            printf 'uci set network.wan.macaddr="$WAN_MAC"\nuci set network.lan.macaddr="$LAN_MAC"\n' >> "$COMBINED_SCRIPT"
+          fi
+          printf 'uci set system.@system[0].hostname="HOS"\n' >> "$COMBINED_SCRIPT"
+          printf 'uci set system.@system[0].timezone="CST-8"\n' >> "$COMBINED_SCRIPT"
+          printf 'uci set system.@system[0].zonename="Asia/Shanghai"\n' >> "$COMBINED_SCRIPT"
+          printf 'uci set luci.main.lang="zh_cn"\n' >> "$COMBINED_SCRIPT"
+          printf 'uci batch << EOF\nset network.loopback=interface\nset network.loopback.device=lo\nset network.loopback.proto=static\nset network.loopback.ipaddr=127.0.0.1\nset network.loopback.netmask=255.0.0.0\n\nset network.lan=interface\nset network.lan.device=br-lan\nset network.lan.proto=static\nset network.lan.ipaddr=192.168.8.1\nset network.lan.netmask=255.255.255.0\nset network.lan.ip6assign=60\nEOF\n' >> "$COMBINED_SCRIPT"
+          if [ "$SOURCE_TYPE" = "openwrt" ]; then
+            printf 'if [ -f /etc/apk/repositories.d/distfeeds.list ]; then\n    sed -i \\\n' >> "$COMBINED_SCRIPT"
+            if [ -n "$CUSTOM_FEEDS" ]; then
+              for feed in $CUSTOM_FEEDS; do
+                printf '        -e "/%s/d" \\\n' "$feed" >> "$COMBINED_SCRIPT"
+              done
+            fi
+            printf '        -e "s|https://downloads.openwrt.org|https://mirrors.ustc.edu.cn/openwrt|g" \\\n        -e "s|http://downloads.openwrt.org|https://mirrors.ustc.edu.cn/openwrt|g" \\\n        -e "/^$/d" \\\n        /etc/apk/repositories.d/distfeeds.list\nfi\n' >> "$COMBINED_SCRIPT"
+          fi
+          printf 'uci commit\necho "CST-8" > /tmp/TZ\n/etc/init.d/system reload >/dev/null 2>&1\n/etc/init.d/uhttpd restart >/dev/null 2>&1\n/etc/init.d/network restart >/dev/null 2>&1\necho "HOS initialization completed."\nexit 0\n' >> "$COMBINED_SCRIPT"
+      - name: 安装编译工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache fastjar file g++ gawk gettext git libacl1-dev libcap-dev libcurl4-openssl-dev libelf-dev libffi-dev libfuse-dev libgmp-dev libisl-dev libjansson-dev libjson-c-dev liblzma-dev liblzo2-dev liblua5.4-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpcre3-dev libpython3-dev libsqlite3-dev libssl-dev libtool libxml2-dev libz-dev libzstd-dev lua5.4 python3 python3-full python3-pip python3-setuptools python3-socks python3-unidecode rsync subversion swig time unzip wget zlib1g-dev zstd bzip2 diffutils findutils util-linux perl coreutils bison flex cmake ninja-build jq clang llvm p7zip-full
+      - name: 准备编译环境
+        run: |
+          set -e
+          cd ${{ github.workspace }}
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          {
+            echo "CONFIG_TARGET_${{ env.TARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}_DEVICE_${{ env.PROFILE }}=y"
+            echo "CONFIG_PACKAGE_luci=y"
+            echo "CONFIG_LUCI_LANG_zh_Hans=y"
+          } > .config
+          make defconfig
+          ALL_PACKAGES="${{ env.PACKAGES }}"
+          if [ -n "$ALL_PACKAGES" ]; then
+            CLEANED_PACKAGES=$(echo "$ALL_PACKAGES" | xargs)
+            for pkg in $CLEANED_PACKAGES; do
+              [ -z "$pkg" ] && continue
+              sed -i "/CONFIG_PACKAGE_${pkg}=/d" .config
+              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+            done
+          fi
+          grep '^CONFIG_PACKAGE_luci-app-.*=y$' .config | sed 's/^CONFIG_PACKAGE_luci-app-\(.*\)=y$/luci-i18n-\1-zh-cn/' | while read i18n; do
+            sed -i "/CONFIG_PACKAGE_${i18n}=/d" .config
+            echo "CONFIG_PACKAGE_${i18n}=y" >> .config
+          done
+          make defconfig
+          echo 'CONFIG_VERSION_DIST="${{ env.DIST_NAME }}"' >> .config
+          echo 'CONFIG_VERSION_CODE="${{ env.CODE }}"' >> .config
+      - name: 编译固件
+        run: |
+          set -e
+          cd ${{ github.workspace }}
+          make download -j$(nproc) || make download -j1 V=s
+          make -j$(nproc) V=s
+      - name: 收集调试文件
+        if: failure()
+        run: |
+          DEBUG_DIR="${{ runner.temp }}/debug"
+          mkdir -p "$DEBUG_DIR"
+          cp build.log .config "$DEBUG_DIR/" 2>/dev/null || true
+          find build_dir -type f -name "*.rej" | while read rej; do
+            orig="${rej%.rej}"
+            dest_rej="$DEBUG_DIR/$rej"
+            mkdir -p "$(dirname "$dest_rej")"
+            cp "$rej" "$dest_rej"
+            if [ -f "$orig" ]; then
+              dest_orig="$DEBUG_DIR/$orig"
+              mkdir -p "$(dirname "$dest_orig")"
+              cp "$orig" "$dest_orig"
+            fi
+          done
+      - name: 上传调试产物
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+          path: ${{ runner.temp }}/debug
+          if-no-files-found: warn
+      - name: 准备发布
+        if: success()
+        run: |
+          mkdir -p ${{ github.workspace }}/release_assets
+          cd ${{ github.workspace }}
+          cd bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/
+          cp ${{ github.workspace }}/.config ./
+          7z a -t7z -p"${{ secrets.secret }}" -mhe=on ${{ github.workspace }}/release_assets/${{ env.PROFILE }}-${{ github.event.inputs.source_branch }}-${{ env.BUILD_TIME }}.7z *
+          cd ${{ github.workspace }}/bin/packages/
+          7z a -t7z -p"${{ secrets.secret }}" -mhe=on ${{ github.workspace }}/release_assets/packages-${{ env.PROFILE }}-${{ github.event.inputs.source_branch }}-${{ env.BUILD_TIME }}.7z *
+      - name: 创建发布
+        if: success()
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+          name: ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
+          body: |
+            设备: ${{ env.PROFILE }}
+            架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
+            时区: Asia/Shanghai (CST-8)
+            默认IP: 192.168.8.1
+            技术支持:<details><summary> 定制固件请联系我QQ或微信83826988</summary>
+            <img src="https://raw.githubusercontent.com/Cairongzeng/dns/main/api/WeChat.png" width="300">
+            </details>
+            定制软件: ${{ env.PACKAGES }}
+          files: |
+            ${{ github.workspace }}/release_assets/*.7z
+          draft: false
+          prerelease: false
