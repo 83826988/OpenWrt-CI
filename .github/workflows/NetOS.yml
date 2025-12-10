@@ -1,0 +1,287 @@
+name: NetOS Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '源码仓库'
+        required: true
+        default: ''
+        type: string
+      source_branch:
+        description: '源码分支'
+        required: true
+        default: ''
+        type: string
+      target:
+        description: '设备架构'
+        required: true
+        default: 'airoha'
+        type: string
+      subtarget:
+        description: '设备芯片'
+        required: true
+        default: 'an7581'
+        type: string
+      profile:
+        description: '设备型号'
+        required: true
+        default: 'bell_xg-040g-md'
+        type: string
+      packages:
+        description: '定制软件'
+        required: false
+        default: 'luci-app-adblock luci-app-arpbind luci-app-autoreboot luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-pbr luci-app-ramfree luci-app-upnp luci-app-usb-printer luci-app-vlmcsd luci-theme-argon'
+        type: string
+      mac_fix:
+        description: 'MAC固化'
+        required: true
+        default: 'false'
+        type: boolean
+
+jobs:
+  build-firmware:
+    name: 构建 ${{ github.event.inputs.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.source_repo }}
+          ref: ${{ github.event.inputs.source_branch }}
+
+      - name: 初始化环境
+        run: |
+          echo "BUILD_TIME=$(date +%y%m%d%H%M)" >> $GITHUB_ENV
+          echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
+          echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
+          echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
+          echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
+          echo "HOSTNAME=NetOS" >> $GITHUB_ENV
+          echo "SUPPORT=WeChat-83826988" >> $GITHUB_ENV
+          
+          sudo mkdir -p /mnt/netos
+          sudo chown -R $(whoami):$(whoami) /mnt/netos
+          
+          mv ${{ github.workspace }} /mnt/netos/netos-src
+          ln -sfn /mnt/netos/netos-src ${{ github.workspace }}
+          
+          cd /mnt/netos/netos-src
+          
+          FEEDS_FILE="feeds.conf.default"
+          SOURCE_TYPE="openwrt"
+          
+          cp "$FEEDS_FILE" "$FEEDS_FILE.backup"
+          
+          if grep -q "immortalwrt" "$FEEDS_FILE.backup" 2>/dev/null; then
+            SOURCE_TYPE="immortalwrt"
+          fi
+          
+          echo "SOURCE_TYPE=$SOURCE_TYPE" >> $GITHUB_ENV
+          
+          CUSTOM_FEEDS=""
+          
+          if [ "$SOURCE_TYPE" = "openwrt" ]; then
+            sed -i \
+                -e 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' \
+                -e 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' \
+                -e 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' \
+                -e 's|https://git.openwrt.org/feed/telephony.git|https://github.com/openwrt/telephony.git|g' \
+                "$FEEDS_FILE"
+            
+            if ! grep -q "netos_packages" "$FEEDS_FILE"; then
+              echo "src-git netos_packages https://github.com/Cairongzeng/packages" >> "$FEEDS_FILE"
+              CUSTOM_FEEDS="$CUSTOM_FEEDS netos_packages"
+            fi
+            
+            if ! grep -q "netos_luci" "$FEEDS_FILE"; then
+              echo "src-git netos_luci https://github.com/Cairongzeng/luci" >> "$FEEDS_FILE"
+              CUSTOM_FEEDS="$CUSTOM_FEEDS netos_luci"
+            fi
+          fi
+          
+          echo "CUSTOM_FEEDS=\"$CUSTOM_FEEDS\"" >> $GITHUB_ENV
+          
+          FILES_DIR="/mnt/netos/netos-src/files"
+          UCI_DEFAULTS_DIR="$FILES_DIR/etc/uci-defaults"
+          mkdir -p "$UCI_DEFAULTS_DIR"
+          
+          UCI_SCRIPT="$UCI_DEFAULTS_DIR/88-netos-system"
+          
+          printf '#!/bin/sh\n' > "$UCI_SCRIPT"
+          printf 'uci set system.@system[0].hostname="NetOS"\n' >> "$UCI_SCRIPT"
+          printf 'uci set system.@system[0].timezone="CST-8"\n' >> "$UCI_SCRIPT"
+          printf 'uci set system.@system[0].zonename="Asia/Shanghai"\n' >> "$UCI_SCRIPT"
+          printf 'uci set luci.main.lang="zh_cn"\n' >> "$UCI_SCRIPT"
+          
+          printf 'uci batch << EOF\n' >> "$UCI_SCRIPT"
+          printf 'set network.loopback=interface\n' >> "$UCI_SCRIPT"
+          printf 'set network.loopback.device=lo\n' >> "$UCI_SCRIPT"
+          printf 'set network.loopback.proto=static\n' >> "$UCI_SCRIPT"
+          printf 'set network.loopback.ipaddr=127.0.0.1\n' >> "$UCI_SCRIPT"
+          printf 'set network.loopback.netmask=255.0.0.0\n' >> "$UCI_SCRIPT"
+          printf '\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan=interface\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan.device=br-lan\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan.proto=static\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan.ipaddr=192.168.8.1\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan.netmask=255.255.255.0\n' >> "$UCI_SCRIPT"
+          printf 'set network.lan.ip6assign=60\n' >> "$UCI_SCRIPT"
+          printf 'EOF\n' >> "$UCI_SCRIPT"
+          printf 'uci commit network\n' >> "$UCI_SCRIPT"
+          
+          if [ "$SOURCE_TYPE" = "openwrt" ]; then
+              printf 'if [ -f /etc/apk/repositories.d/distfeeds.list ]; then\n' >> "$UCI_SCRIPT"
+              printf '    sed -i \\\n' >> "$UCI_SCRIPT"
+              
+              if [ -n "$CUSTOM_FEEDS" ]; then
+                  for feed in $CUSTOM_FEEDS; do
+                      printf '        -e "/%s/d" \\\n' "$feed" >> "$UCI_SCRIPT"
+                  done
+              fi
+              
+              printf '        -e "s|https://downloads.openwrt.org|https://mirrors.pku.edu.cn/openwrt|g" \\\n' >> "$UCI_SCRIPT"
+              printf '        -e "s|http://downloads.openwrt.org|https://mirrors.pku.edu.cn/openwrt|g" \\\n' >> "$UCI_SCRIPT"
+              printf '        -e "/^$/d" \\\n' >> "$UCI_SCRIPT"
+              printf '        /etc/apk/repositories.d/distfeeds.list\n' >> "$UCI_SCRIPT"
+              printf '    apk update\n' >> "$UCI_SCRIPT"
+              printf 'fi\n' >> "$UCI_SCRIPT"
+          fi
+          
+          printf 'if uci commit; then\n' >> "$UCI_SCRIPT"
+          printf '    echo "CST-8" > /tmp/TZ\n' >> "$UCI_SCRIPT"
+          printf '    /etc/init.d/system reload >/dev/null 2>&1\n' >> "$UCI_SCRIPT"
+          printf '    /etc/init.d/uhttpd restart >/dev/null 2>&1\n' >> "$UCI_SCRIPT"
+          printf '    /etc/init.d/network reload >/dev/null 2>&1\n' >> "$UCI_SCRIPT"
+          printf 'fi\n' >> "$UCI_SCRIPT"
+          printf 'exit 0\n' >> "$UCI_SCRIPT"
+          
+          chmod +x "$UCI_SCRIPT"
+          
+          if [ "${{ github.event.inputs.mac_fix }}" = "true" ]; then
+            MAC_SCRIPT="$UCI_DEFAULTS_DIR/99-fix-mac"
+            printf '%s\n' '#!/bin/sh' > "$MAC_SCRIPT"
+            printf '%s\n' 'if command -v fw_printenv >/dev/null 2>&1 && [ -f /etc/fw_env.config ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    UBOOT_MAC=$(fw_printenv ethaddr 2>/dev/null | cut -d= -f2)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if [ -n "$UBOOT_MAC" ] && echo "$UBOOT_MAC" | grep -qE "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        BASE_MAC="$UBOOT_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '        logger -t "mac-fix" "Using U-Boot MAC: $BASE_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if [ -z "$BASE_MAC" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    CURRENT_MAC=$(ip link show lan1 2>/dev/null | grep link/ether | awk '\''{print $2}'\'' | tr -d '\'':'\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if [ -z "$CURRENT_MAC" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        logger -t "mac-fix" "ERROR: Cannot get MAC for lan1"' >> "$MAC_SCRIPT"
+            printf '%s\n' '        exit 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte1=$(printf "%02x" $((0x$(echo "$CURRENT_MAC" | cut -b1-2) & 0xFE | 0x02)))' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte2=$(echo "$CURRENT_MAC" | cut -b3-4)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte3=$(echo "$CURRENT_MAC" | cut -b5-6)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte4=$(echo "$CURRENT_MAC" | cut -b7-8)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte5=$(echo "$CURRENT_MAC" | cut -b9-10)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    byte6=$(echo "$CURRENT_MAC" | cut -b11-12)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    BASE_MAC="${byte1}:${byte2}:${byte3}:${byte4}:${byte5}:${byte6}"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    logger -t "mac-fix" "Using generated MAC from lan1: $BASE_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' 'last_byte=$(echo "$BASE_MAC" | awk -F: '\''{print $6}'\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' 'dec_last=$((0x$last_byte))' >> "$MAC_SCRIPT"
+            printf '%s\n' 'next_dec=$(( (dec_last + 1) % 256 ))' >> "$MAC_SCRIPT"
+            printf '%s\n' 'next_hex=$(printf "%02x" $next_dec)' >> "$MAC_SCRIPT"
+            printf '%s\n' 'LAN_MAC=$(echo "$BASE_MAC" | awk -F: -v nh="$next_hex" '\''{printf "%s:%s:%s:%s:%s:%s", $1,$2,$3,$4,$5, nh}'\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci set network.wan.macaddr="$BASE_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci set network.lan.macaddr="$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci commit network' >> "$MAC_SCRIPT"
+            printf '%s\n' '/etc/init.d/network restart >/dev/null 2>&1' >> "$MAC_SCRIPT"
+            printf '%s\n' 'logger -t "mac-fix" "MAC fixed: WAN=$BASE_MAC, LAN=$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'exit 0' >> "$MAC_SCRIPT"
+            chmod +x "$MAC_SCRIPT"
+          fi
+
+      - name: 安装编译工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache fastjar file g++ gawk gettext git libacl1-dev libcap-dev libcurl4-openssl-dev libelf-dev libffi-dev libfuse-dev libgmp-dev libisl-dev libjansson-dev libjson-c-dev liblzma-dev liblzo2-dev liblua5.4-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpcre3-dev libpython3-dev libsqlite3-dev libssl-dev libtool libxml2-dev libz-dev libzstd-dev lua5.4 python3 python3-full python3-pip python3-setuptools python3-socks python3-unidecode rsync subversion swig time unzip wget zlib1g-dev zstd bzip2 diffutils findutils util-linux perl coreutils bison flex cmake ninja-build jq clang llvm p7zip-full
+
+      - name: 准备编译环境
+        run: |
+          set -e
+          cd /mnt/netos/netos-src
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          {
+            echo "CONFIG_TARGET_${{ env.TARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}_DEVICE_${{ env.PROFILE }}=y"
+            echo "CONFIG_PACKAGE_luci=y"
+            echo "CONFIG_LUCI_LANG_zh_Hans=y"
+          } > .config
+
+          make defconfig
+
+          ALL_PACKAGES="${{ env.PACKAGES }}"
+          if [ -n "$ALL_PACKAGES" ]; then
+            CLEANED_PACKAGES=$(echo "$ALL_PACKAGES" | xargs)
+            for pkg in $CLEANED_PACKAGES; do
+              [ -z "$pkg" ] && continue
+              sed -i "/CONFIG_PACKAGE_${pkg}=/d" .config
+              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+            done
+          fi
+
+          grep '^CONFIG_PACKAGE_luci-app-.*=y$' .config | sed 's/^CONFIG_PACKAGE_luci-app-\(.*\)=y$/luci-i18n-\1-zh-cn/' | while read i18n; do
+            sed -i "/CONFIG_PACKAGE_${i18n}=/d" .config
+            echo "CONFIG_PACKAGE_${i18n}=y" >> .config
+          done
+
+          make defconfig
+
+          echo 'CONFIG_VERSION_DIST="${{ env.HOSTNAME }}"' >> .config
+          echo 'CONFIG_VERSION_CODE="${{ env.SUPPORT }}"' >> .config
+
+          for opt in BPF BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF BPF_EVENTS KPROBES KPROBE_EVENTS NVMEM_U_BOOT_ENV NVMEM_AIROHA_SMC_EFUSES; do
+            sed -i "/CONFIG_${opt}=/d" .config
+            echo "CONFIG_${opt}=y" >> .config
+          done
+
+      - name: 编译固件
+        run: |
+          set -e
+          cd /mnt/netos/netos-src
+          make download -j$(nproc) || make download -j1 V=s
+          make -j$(nproc) V=s
+
+      - name: 准备发布
+        if: success()
+        run: |
+          mkdir -p ${{ github.workspace }}/release_assets
+          cd /mnt/netos/netos-src
+          cd bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/
+          cp /mnt/netos/netos-src/.config ./
+          7z a -t7z -p"${{ secrets.secret }}" -mhe=on ${{ github.workspace }}/release_assets/${{ env.PROFILE }}-${{ env.SUPPORT }}-${{ env.BUILD_TIME }}.7z *
+          cd /mnt/netos/netos-src/bin/packages/
+          7z a -t7z ${{ github.workspace }}/release_assets/packages-${{ env.PROFILE }}-${{ env.BUILD_TIME }}.7z *
+
+      - name: 创建发布
+        if: success()
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+          name: ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
+          body: |
+            设备: ${{ env.PROFILE }}
+            架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
+            时区: Asia/Shanghai (CST-8)
+            技术支持: ${{ env.SUPPORT }}
+            定制软件: ${{ env.PACKAGES }}
+          files: |
+            ${{ github.workspace }}/release_assets/*.7z
+          draft: false
+          prerelease: false
