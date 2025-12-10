@@ -1,0 +1,454 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2025-2026 Rongzeng Cai <cairongzeng@outlook.com>
+name: HomeOS Firmware
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '源码仓库'
+        required: true
+        default: 'Cairongzeng/HomeOS'
+        type: string
+      source_branch:
+        description: '源码分支'
+        required: true
+        default: 'openwrt-25.12'
+        type: string
+      target:
+        description: '设备架构'
+        required: true
+        default: 'airoha'
+        type: string
+      subtarget:
+        description: '设备芯片'
+        required: true
+        default: 'an7581'
+        type: string
+      profile:
+        description: '设备型号'
+        required: true
+        default: 'nokia_xg-040g-md'
+        type: string
+      use_hos:
+        description: '启用HOS'
+        required: false
+        default: false
+        type: boolean
+      packages:
+        description: '定制软件'
+        required: false
+        default: 'luci-app-adblock luci-app-arpbind luci-app-autoreboot luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-ramfree luci-app-usb-printer luci-app-vlmcsd luci-theme-hos'
+        type: string
+      mac_fix:
+        description: 'MAC固化'
+        required: true
+        default: 'false'
+        type: boolean
+jobs:
+  build-firmware:
+    name: 构建 ${{ github.event.inputs.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Hong_Kong
+    steps:
+      - name: 检出 OpenWrt 源码
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.source_repo }}
+          ref: ${{ github.event.inputs.source_branch }}
+          path: openwrt
+      - name: 初始化环境
+        run: |
+          echo "BUILD_TIME=$(date +%y%m%d%H%M)" >> $GITHUB_ENV
+          echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
+          echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
+          echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
+          echo "PKGS=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
+          echo "PKG_DISP=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
+          if [ "${{ github.event.inputs.use_hos }}" = "true" ]; then
+            echo "NOTICE=🔒 此固件为加密专属定制版本，包含未公开内容，请前往公开发布版本下载固件。" >> $GITHUB_ENV
+          else
+            echo "NOTICE=" >> $GITHUB_ENV
+          fi
+          df -h
+          git clone --depth 1 https://github.com/${{ github.repository }}.git openwrt/package/HomeOS || { echo "::error::克隆失败"; exit 1; }
+          cd openwrt
+          if [ -f include/version.mk ]; then
+            sed -i '/^VERSION_DIST:=/c\VERSION_DIST:=HomeOS' include/version.mk
+            sed -i '/^VERSION_CODE:=/c\VERSION_CODE:=0595-85590055' include/version.mk
+            VER=$(sed -n 's/^VERSION_NUMBER:=$(if $(VERSION_NUMBER),$(VERSION_NUMBER),\([^)]*\)).*/\1/p' include/version.mk)
+            echo "VER=$VER" >> $GITHUB_ENV
+          fi
+          if [ -f package/kernel/mac80211/files/lib/wifi/mac80211.sh ]; then
+            sed -i 's/ssid="OpenWrt"/ssid="HOS"/' package/kernel/mac80211/files/lib/wifi/mac80211.sh
+          fi
+          if [ -f package/kernel/mt76/files/lib/wifi/mt76.sh ]; then
+            sed -i 's/ssid="OpenWrt"/ssid="HOS"/' package/kernel/mt76/files/lib/wifi/mt76.sh
+          fi
+          if [ "${{ github.event.inputs.mac_fix }}" = "true" ]; then
+            mkdir -p files/etc/uci-defaults
+            MAC_SCRIPT="files/etc/uci-defaults/888-mac-fix"
+            # 使用 printf 逐行写入脚本，避免 heredoc 和 cat 可能引起的 YAML 解析问题
+            printf '%s\n' '#!/bin/sh' > "$MAC_SCRIPT"
+            printf '%s\n' 'exec >> /tmp/mac-fix.log 2>&1' >> "$MAC_SCRIPT"
+            printf '%s\n' 'set -x' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'is_valid_mac() {' >> "$MAC_SCRIPT"
+            printf '%s\n' '    mac="$1"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    [ -z "$mac" ] && return 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "$mac" | grep -qE '\''^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'\'' || return 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    [ "$mac" = "00:00:00:00:00:00" ] && return 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    [ "$mac" = "ff:ff:ff:ff:ff:ff" ] && return 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    first_byte_hex=$(echo "$mac" | cut -d: -f1)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    first_byte_dec=$((0x$first_byte_hex))' >> "$MAC_SCRIPT"
+            printf '%s\n' '    [ $((first_byte_dec & 0x01)) -ne 0 ] && return 1' >> "$MAC_SCRIPT"
+            printf '%s\n' '    return 0' >> "$MAC_SCRIPT"
+            printf '%s\n' '}' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'WAIT_MAX=30' >> "$MAC_SCRIPT"
+            printf '%s\n' 'WAIT_INTERVAL=3' >> "$MAC_SCRIPT"
+            printf '%s\n' 'elapsed=0' >> "$MAC_SCRIPT"
+            printf '%s\n' 'BASE_MAC=""' >> "$MAC_SCRIPT"
+            printf '%s\n' 'while [ $elapsed -lt $WAIT_MAX ]; do' >> "$MAC_SCRIPT"
+            printf '%s\n' '    BASE_MAC=$(ip link show eth0 2>/dev/null | grep link/ether | awk '\''{print $2}'\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if is_valid_mac "$BASE_MAC"; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        echo "eth0 MAC: $BASE_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '        break' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '    sleep $WAIT_INTERVAL' >> "$MAC_SCRIPT"
+            printf '%s\n' '    elapsed=$((elapsed + WAIT_INTERVAL))' >> "$MAC_SCRIPT"
+            printf '%s\n' 'done' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if [ -z "$BASE_MAC" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "ERROR: Cannot get eth0 MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    exit 1' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'last_byte=$(echo "$BASE_MAC" | awk -F: '\''{print $6}'\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' 'dec_last=$((0x$last_byte))' >> "$MAC_SCRIPT"
+            printf '%s\n' 'prefix=$(echo "$BASE_MAC" | cut -d: -f1-5)' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'WAN_MAC="${prefix}:$(printf "%02x" $(((dec_last + 1) & 0xFF)))"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'LAN_MAC="$BASE_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'echo "Generated WAN MAC: $WAN_MAC, LAN MAC: $LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'ip link set dev eth0 address "$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'WAN_DEV=""' >> "$MAC_SCRIPT"
+            printf '%s\n' 'UCI_WAN_DEV=$(uci get network.wan.device 2>/dev/null)' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if [ -n "$UCI_WAN_DEV" ] && ip link show "$UCI_WAN_DEV" >/dev/null 2>&1; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    WAN_DEV="$UCI_WAN_DEV"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "Using UCI WAN device: $WAN_DEV"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'else' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "UCI device unavailable or invalid, scanning physical interfaces..."' >> "$MAC_SCRIPT"
+            printf '%s\n' '    for dev in /sys/class/net/*; do' >> "$MAC_SCRIPT"
+            printf '%s\n' '        iface=$(basename "$dev")' >> "$MAC_SCRIPT"
+            printf '%s\n' '        case "$iface" in' >> "$MAC_SCRIPT"
+            printf '%s\n' '            lo|br-*|vlan*|dummy*|bond*|tun*|tap*|sit*|gre*|gretap*|erspan*|ip6*|ip*|vti*)' >> "$MAC_SCRIPT"
+            printf '%s\n' '                continue' >> "$MAC_SCRIPT"
+            printf '%s\n' '                ;;' >> "$MAC_SCRIPT"
+            printf '%s\n' '        esac' >> "$MAC_SCRIPT"
+            printf '%s\n' '        [ "$iface" = "eth0" ] && continue' >> "$MAC_SCRIPT"
+            printf '%s\n' '        if [ -d "$dev/device" ] || [ -L "$dev/phy_device" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '            WAN_DEV="$iface"' >> "$MAC_SCRIPT"
+            printf '%s\n' '            echo "Auto-detected WAN device: $WAN_DEV"' >> "$MAC_SCRIPT"
+            printf '%s\n' '            break' >> "$MAC_SCRIPT"
+            printf '%s\n' '        fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '    done' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if [ -n "$WAN_DEV" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    ip link set dev "$WAN_DEV" address "$WAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.wan.device="$WAN_DEV"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if ! uci show network | grep -q "network.@device.*\.name='\''$WAN_DEV'\''"; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci add network device' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[-1].name="$WAN_DEV"' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[-1].macaddr="$WAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    else' >> "$MAC_SCRIPT"
+            printf '%s\n' '        dev_idx=$(uci show network | grep "network.@device.*\.name='\''$WAN_DEV'\''" | cut -d'\''['\'' -f2 | cut -d'\'']'\'' -f1)' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[$dev_idx].macaddr="$WAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' 'else' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "WARNING: No WAN device found. Skipping WAN MAC assignment."' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci set network.wan.macaddr="$WAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci set network.lan.macaddr="$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if ! uci show network | grep -q "network.@device.*\.name='\''eth0'\''"; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci add network device' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].name='\''eth0'\''' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].macaddr="$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'else' >> "$MAC_SCRIPT"
+            printf '%s\n' '    dev_idx=$(uci show network | grep "network.@device.*\.name='\''eth0'\''" | cut -d'\''['\'' -f2 | cut -d'\'']'\'' -f1)' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[$dev_idx].macaddr="$LAN_MAC"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'PHYS_IFACES=""' >> "$MAC_SCRIPT"
+            printf '%s\n' 'for dev in /sys/class/net/*; do' >> "$MAC_SCRIPT"
+            printf '%s\n' '    iface=$(basename "$dev")' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if [ ! -d "$dev/device" ] && [ ! -L "$dev/phy_device" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        continue' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '    case "$iface" in' >> "$MAC_SCRIPT"
+            printf '%s\n' '        lo|eth0|"$WAN_DEV") continue ;;' >> "$MAC_SCRIPT"
+            printf '%s\n' '    esac' >> "$MAC_SCRIPT"
+            printf '%s\n' '    PHYS_IFACES="$PHYS_IFACES $iface"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'done' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'PHYS_IFACES=$(echo $PHYS_IFACES | tr '\'' '\'' '\''\n'\'' | sort | tr '\''\n'\'' '\'' '\'')' >> "$MAC_SCRIPT"
+            printf '%s\n' 'offset=2' >> "$MAC_SCRIPT"
+            printf '%s\n' 'for iface in $PHYS_IFACES; do' >> "$MAC_SCRIPT"
+            printf '%s\n' '    new_mac="${prefix}:$(printf "%02x" $(((dec_last + offset) & 0xFF)))"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "Assigning MAC $new_mac to $iface"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    if ! uci show network | grep -q "network.@device.*\.name='\''$iface'\''"; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci add network device' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[-1].name="$iface"' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[-1].macaddr="$new_mac"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    else' >> "$MAC_SCRIPT"
+            printf '%s\n' '        dev_idx=$(uci show network | grep "network.@device.*\.name='\''$iface'\''" | cut -d'\''['\'' -f2 | cut -d'\'']'\'' -f1)' >> "$MAC_SCRIPT"
+            printf '%s\n' '        uci set network.@device[$dev_idx].macaddr="$new_mac"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '    offset=$((offset + 1))' >> "$MAC_SCRIPT"
+            printf '%s\n' 'done' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'bridge_mac="${prefix}:$(printf "%02x" $(((dec_last + 5) & 0xFF)))"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'bridge_idx=$(uci show network | grep "network.@device.*\.name='\''br-lan'\''" | cut -d'\''['\'' -f2 | cut -d'\'']'\'' -f1)' >> "$MAC_SCRIPT"
+            printf '%s\n' 'if [ -n "$bridge_idx" ]; then' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[$bridge_idx].macaddr="$bridge_mac"' >> "$MAC_SCRIPT"
+            printf '%s\n' 'else' >> "$MAC_SCRIPT"
+            printf '%s\n' '    echo "Warning: br-lan device not found in config, creating it."' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci add network device' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].name='\''br-lan'\''' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].type='\''bridge'\''' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].macaddr="$bridge_mac"' >> "$MAC_SCRIPT"
+            printf '%s\n' '    uci set network.@device[-1].ports='\''lan2 lan3 lan4'\''' >> "$MAC_SCRIPT"
+            printf '%s\n' 'fi' >> "$MAC_SCRIPT"
+            printf '%s\n' '' >> "$MAC_SCRIPT"
+            printf '%s\n' 'uci commit' >> "$MAC_SCRIPT"
+            printf '%s\n' 'echo "MAC assignment completed. Reboot to apply all changes persistently."' >> "$MAC_SCRIPT"
+            printf '%s\n' 'exit 0' >> "$MAC_SCRIPT"
+            chmod +x "$MAC_SCRIPT"
+          fi
+          FEEDS_FILE="feeds.conf.default"
+          SRC_TYPE="openwrt"
+          if grep -q "immortalwrt" "$FEEDS_FILE" 2>/dev/null; then
+            SRC_TYPE="immortalwrt"
+          fi
+          echo "SRC_TYPE=$SRC_TYPE" >> $GITHUB_ENV
+          CFEEDS=""
+          if [ "$SRC_TYPE" = "openwrt" ]; then
+            sed -i \
+                -e 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' \
+                -e 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' \
+                -e 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' \
+                -e 's|https://git.openwrt.org/feed/telephony.git|https://github.com/openwrt/telephony.git|g' \
+                "$FEEDS_FILE"
+            for feed in "custom_packages https://github.com/immortalwrt/packages.git" \
+                        "custom_luci https://github.com/immortalwrt/luci.git"; do
+              feed_name="${feed%% *}"
+              if ! grep -q "^src-git $feed_name\b" "$FEEDS_FILE"; then
+                echo "src-git $feed" >> "$FEEDS_FILE"
+                CFEEDS="$CFEEDS $feed_name"
+              fi
+            done
+            CFEEDS="${CFEEDS# }"
+          fi
+          echo "CFEEDS=\"$CFEEDS\"" >> $GITHUB_ENV
+          FILES_DIR="files"
+          UCI_DEFAULTS_DIR="$FILES_DIR/etc/uci-defaults"
+          mkdir -p "$UCI_DEFAULTS_DIR"
+          if [ "${{ github.event.inputs.use_hos }}" = "true" ]; then
+            hos_repo="${{ secrets.HOS_URL }}"
+            if [ -n "$hos_repo" ]; then
+              git clone --depth 1 "$hos_repo" package/hos || { echo "::error::克隆失败"; exit 1; }
+            fi
+          fi
+          if [[ "$VER" != *SNAPSHOT* ]]; then
+            CN_MIRROR="true"
+          else
+            CN_MIRROR="false"
+          fi
+          MIRROR_URL=""
+          if [ "$SRC_TYPE" = "openwrt" ]; then
+            MIRROR_URL="mirrors.ustc.edu.cn/openwrt"
+          elif [ "$SRC_TYPE" = "immortalwrt" ]; then
+            MIRROR_URL="mirrors.pku.edu.cn/immortalwrt"
+          fi
+          SCRIPT_66="$UCI_DEFAULTS_DIR/66-hos-init"
+          printf '#!/bin/sh\n' > "$SCRIPT_66"
+          printf 'exec >> /tmp/hos-init.log 2>&1\n' >> "$SCRIPT_66"
+          printf 'set -x\n\n' >> "$SCRIPT_66"
+          printf 'uci set system.@system[0].hostname="HOS"\n' >> "$SCRIPT_66"
+          printf 'uci set system.@system[0].timezone="CST-8"\n' >> "$SCRIPT_66"
+          printf 'uci set system.@system[0].zonename="Asia/Shanghai"\n\n' >> "$SCRIPT_66"
+          printf 'CONFIG_FILE="/etc/apk/repositories.d/distfeeds.list"\n' >> "$SCRIPT_66"
+          printf 'if [ -f "$CONFIG_FILE" ]; then\n' >> "$SCRIPT_66"
+          printf '    sed -i \\\n' >> "$SCRIPT_66"
+          if [ -n "$CFEEDS" ]; then
+            for feed in $CFEEDS; do
+              printf '        -e "/%s/d" \\\n' "$feed" >> "$SCRIPT_66"
+            done
+          fi
+          printf '        -e "/^$/d" \\\n' >> "$SCRIPT_66"
+          printf '        "$CONFIG_FILE"\n' >> "$SCRIPT_66"
+          printf 'fi\n\n' >> "$SCRIPT_66"
+          if [ "$CN_MIRROR" = "true" ]; then
+            printf 'if [ -f "$CONFIG_FILE" ]; then\n' >> "$SCRIPT_66"
+            printf '    sed -i \\\n' >> "$SCRIPT_66"
+            printf '        -e "s|https://downloads.%s.org|https://%s|g" \\\n' "$SRC_TYPE" "$MIRROR_URL" >> "$SCRIPT_66"
+            printf '        -e "s|http://downloads.%s.org|https://%s|g" \\\n' "$SRC_TYPE" "$MIRROR_URL" >> "$SCRIPT_66"
+            printf '        "$CONFIG_FILE"\n' >> "$SCRIPT_66"
+            printf 'fi\n\n' >> "$SCRIPT_66"
+          fi
+          printf 'uci batch << EON\n' >> "$SCRIPT_66"
+          printf 'set network.loopback=interface\n' >> "$SCRIPT_66"
+          printf 'set network.loopback.device=lo\n' >> "$SCRIPT_66"
+          printf 'set network.loopback.proto=static\n' >> "$SCRIPT_66"
+          printf 'set network.loopback.ipaddr=127.0.0.1\n' >> "$SCRIPT_66"
+          printf 'set network.loopback.netmask=255.0.0.0\n' >> "$SCRIPT_66"
+          printf 'set network.lan=interface\n' >> "$SCRIPT_66"
+          printf 'set network.lan.device=br-lan\n' >> "$SCRIPT_66"
+          printf 'set network.lan.proto=static\n' >> "$SCRIPT_66"
+          printf 'set network.lan.ipaddr=192.168.8.1\n' >> "$SCRIPT_66"
+          printf 'set network.lan.netmask=255.255.255.0\n' >> "$SCRIPT_66"
+          printf 'set network.lan.ip6assign=60\n' >> "$SCRIPT_66"
+          printf 'EON\n' >> "$SCRIPT_66"
+          printf 'uci commit\n\n' >> "$SCRIPT_66"
+          printf '/etc/init.d/system reload >/dev/null 2>&1\n' >> "$SCRIPT_66"
+          printf '/etc/init.d/uhttpd restart >/dev/null 2>&1\n' >> "$SCRIPT_66"
+          printf '/etc/init.d/network restart >/dev/null 2>&1\n\n' >> "$SCRIPT_66"
+          printf 'echo "HOS initialization completed."\n' >> "$SCRIPT_66"
+          printf 'exit 0\n' >> "$SCRIPT_66"
+          chmod +x "$UCI_DEFAULTS_DIR"/*
+      - name: 安装编译工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache fastjar file g++ gawk gettext git libacl1-dev libcap-dev libcurl4-openssl-dev libelf-dev libffi-dev libfuse-dev libgmp-dev libisl-dev libjansson-dev libjson-c-dev liblzma-dev liblzo2-dev liblua5.4-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpcre3-dev libpython3-dev libsqlite3-dev libssl-dev libtool libxml2-dev libz-dev libzstd-dev lua5.4 python3 python3-full python3-pip python3-setuptools python3-socks python3-unidecode rsync subversion swig time unzip wget zlib1g-dev zstd bzip2 diffutils findutils util-linux perl coreutils bison flex cmake ninja-build jq clang llvm p7zip-full
+      - name: 准备编译环境
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          {
+            echo "CONFIG_TARGET_${{ env.TARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}=y"
+            echo "CONFIG_TARGET_${{ env.TARGET }}_${{ env.SUBTARGET }}_DEVICE_${{ env.PROFILE }}=y"
+            echo "CONFIG_PACKAGE_luci=y"
+            echo "CONFIG_LUCI_LANG_zh_Hans=y"
+          } > .config
+          EXTRA_PACKAGES=""
+          if [ -d "package/HomeOS" ]; then
+            while IFS= read -r makefile; do
+                pkgdir=$(dirname "$makefile")
+                pkg_name=$(grep -E '^PKG_NAME\s*:=' "$makefile" | head -1 | sed -E 's/^PKG_NAME\s*:=\s*([^[:space:]]+).*$/\1/' | tr -d ' ')
+                if [ -z "$pkg_name" ]; then
+                    pkg_name=$(basename "$pkgdir")
+                fi
+                EXTRA_PACKAGES="$EXTRA_PACKAGES $pkg_name"
+            done < <(find "package/HomeOS" -type f -name Makefile)
+            EXTRA_PACKAGES=$(echo "$EXTRA_PACKAGES" | xargs)
+          fi
+          if [ "${{ github.event.inputs.use_hos }}" = "true" ] && [ -d "package/hos" ]; then
+            while IFS= read -r makefile; do
+                pkgdir=$(dirname "$makefile")
+                pkg_name=$(grep -E '^PKG_NAME\s*:=' "$makefile" | head -1 | sed -E 's/^PKG_NAME\s*:=\s*([^[:space:]]+).*$/\1/' | tr -d ' ')
+                if [ -z "$pkg_name" ]; then
+                    pkg_name=$(basename "$pkgdir")
+                fi
+                EXTRA_PACKAGES="$EXTRA_PACKAGES $pkg_name"
+            done < <(find "package/hos" -type f -name Makefile)
+            EXTRA_PACKAGES=$(echo "$EXTRA_PACKAGES" | xargs)
+          fi
+          ALL_PACKAGES="${{ env.PKGS }} $EXTRA_PACKAGES"
+          if [ -n "$ALL_PACKAGES" ]; then
+            CLEANED_PACKAGES=$(echo "$ALL_PACKAGES" | xargs)
+            for pkg in $CLEANED_PACKAGES; do
+              [ -z "$pkg" ] && continue
+              sed -i "/CONFIG_PACKAGE_${pkg}=/d" .config
+              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+            done
+          fi
+          grep '^CONFIG_PACKAGE_luci-app-.*=y$' .config | sed 's/^CONFIG_PACKAGE_luci-app-\(.*\)=y$/luci-i18n-\1-zh-cn/' | while read i18n; do
+            sed -i "/CONFIG_PACKAGE_${i18n}=/d" .config
+            echo "CONFIG_PACKAGE_${i18n}=y" >> .config
+          done
+          make defconfig
+      - name: 编译固件
+        run: |
+          cd openwrt
+          make download -j$(nproc) || make download -j1 V=s
+          make -j$(nproc) V=s
+
+      - name: 上传补丁拒绝文件
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-rejects
+          path: |
+            openwrt/build_dir/**/*.rej
+            openwrt/target/linux/**/*.rej
+
+      - name: 准备发布
+        if: success()
+        run: |
+          cd openwrt
+          mkdir -p ${{ github.workspace }}/release_assets
+          VER_UPPER=$(echo "${{ env.VER }}" | tr '[:lower:]' '[:upper:]')
+          PROFILE_UPPER=$(echo "${{ env.PROFILE }}" | tr '[:lower:]' '[:upper:]')
+          echo "VER_UPPER=${VER_UPPER}" >> $GITHUB_ENV
+          echo "PROFILE_UPPER=${PROFILE_UPPER}" >> $GITHUB_ENV
+          cd bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/
+          cp ${{ github.workspace }}/openwrt/.config ./${{ env.PROFILE }}.config
+          SECRET="${{ secrets.secret }}"
+          if [ "${{ github.event.inputs.use_hos }}" = "true" ] && [ -n "$SECRET" ]; then
+            7z a -t7z -p"$SECRET" -mhe=on ${{ github.workspace }}/release_assets/HomeOS-${VER_UPPER}-${PROFILE_UPPER}-${{ env.BUILD_TIME }}.7z *
+          else
+            7z a -t7z ${{ github.workspace }}/release_assets/HomeOS-${VER_UPPER}-${PROFILE_UPPER}-${{ env.BUILD_TIME }}.7z *
+          fi
+          cd ${{ github.workspace }}/openwrt/bin/packages/
+          if [ "${{ github.event.inputs.use_hos }}" = "true" ] && [ -n "$SECRET" ]; then
+            7z a -t7z -p"$SECRET" -mhe=on ${{ github.workspace }}/release_assets/packages-${{ env.PROFILE }}-${{ env.BUILD_TIME }}.7z *
+          else
+            7z a -t7z ${{ github.workspace }}/release_assets/packages-${{ env.PROFILE }}-${{ env.BUILD_TIME }}.7z *
+          fi
+      - name: 创建发布
+        if: success()
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: HomeOS-${{ env.PROFILE_UPPER }}-${{ env.VER_UPPER }}-${{ env.BUILD_TIME }}
+          name: HomeOS ${{ env.PROFILE_UPPER }} ${{ env.VER_UPPER }} ${{ env.BUILD_TIME }}
+          body: |
+            设备: ${{ env.PROFILE }}
+            架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
+            默认IP: 192.168.8.1
+
+            ### ☕ 支持项目
+            如果您觉得这个项目对您有帮助，欢迎请我喝杯咖啡，您的支持是持续维护的动力！
+
+            <details>
+            <summary>📸 点击展开/收起赞赏码</summary>
+
+            | 支付宝 | 微信支付 |
+            |--------|----------|
+            | <img src="https://raw.githubusercontent.com/Cairongzeng/HomeOS/main/.img/Alipay.png" width="180"> | <img src="https://raw.githubusercontent.com/Cairongzeng/HomeOS/main/.img/WePay.png" width="180"> |
+
+            </details>
+
+            技术支持:
+            <details><summary>📱 点击扫码加我微信</summary>
+            <img src="https://raw.githubusercontent.com/Cairongzeng/HomeOS/main/.img/WeChat.png" width="180">
+            </details>
+
+            定制软件: ${{ env.PKG_DISP }}
+            ${{ env.NOTICE }}
+
+            **请注意**：如果您克隆或转发此固件，请保留原作者信息及出处，感谢理解与支持！
+          files: |
+            ${{ github.workspace }}/release_assets/*.7z
+          draft: false
+          prerelease: false

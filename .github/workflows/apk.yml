@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2025-2026 Rongzeng Cai <cairongzeng@outlook.com>
+name: 编译APK软件包
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: '包名（空格分隔）'
+        required: true
+        default: 'luci-theme-hos'
+      source_url:
+        description: '源码仓库'
+        required: true
+        default: ''
+      source_branch:
+        description: '源码分支'
+        required: false
+        default: 'main'
+      external_subpaths:
+        description: '包路径（空格分隔）'
+        required: true
+        default: ''
+      target:
+        description: '架构'
+        required: true
+        default: 'airoha'
+      subtarget:
+        description: '芯片'
+        required: true
+        default: 'an7581'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 准备环境
+        run: |
+          sudo apt-get update && sudo apt-get install -y zstd
+          BASE_URL="https://downloads.openwrt.org/snapshots/targets/${{ github.event.inputs.target }}/${{ github.event.inputs.subtarget }}/"
+          DIR_CONTENT=$(curl -s "${BASE_URL}")
+          SDK_FILE=$(echo "$DIR_CONTENT" | grep -oE 'openwrt-sdk-[^"]+\.tar\.(xz|zst)' | head -1)
+          [ -z "$SDK_FILE" ] && exit 1
+          echo "SDK_URL=${BASE_URL}${SDK_FILE}" >> $GITHUB_ENV
+
+      - name: 缓存 SDK
+        id: cache-sdk
+        uses: actions/cache@v3
+        with:
+          path: sdk
+          key: sdk-${{ github.event.inputs.target }}-${{ github.event.inputs.subtarget }}
+          restore-keys: sdk-${{ github.event.inputs.target }}-${{ github.event.inputs.subtarget }}
+      - name: 下载 SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          wget -q "$SDK_URL" -O sdk.archive
+          mkdir sdk
+          if [[ "$SDK_URL" == *.tar.xz ]]; then
+            tar -xf sdk.archive -C sdk --strip-components=1
+          else
+            tar -I zstd -xf sdk.archive -C sdk --strip-components=1
+          fi
+          rm sdk.archive
+
+      - name: 配置 feeds
+        run: |
+          cd sdk
+          cat > feeds.conf.default << EOF
+          src-git base https://github.com/openwrt/openwrt.git
+          src-git luci https://github.com/openwrt/luci.git
+          EOF
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 准备源码
+        run: |
+          git clone --depth 1 -b "${{ github.event.inputs.source_branch }}" "${{ github.event.inputs.source_url }}" external_src
+          IFS=' ' read -ra PKGS <<< "${{ github.event.inputs.packages }}"
+          IFS=' ' read -ra EXTS <<< "${{ github.event.inputs.external_subpaths }}"
+          for i in "${!PKGS[@]}"; do
+            PKG="${PKGS[$i]}"
+            EXT="${EXTS[$i]}"
+            if [ -z "$EXT" ]; then
+              echo "错误: 包 $PKG 未指定路径"
+              exit 1
+            fi
+            SRC_PATH="external_src/$EXT"
+            if [ ! -d "$SRC_PATH" ]; then
+              echo "错误: 路径 $EXT 不存在"
+              exit 1
+            fi
+            mkdir -p sdk/package/$PKG
+            cp -r "$SRC_PATH"/* sdk/package/$PKG/
+          done
+
+      - name: 注册包
+        run: |
+          cd sdk
+          make package/symlinks
+          for pkg in ${{ github.event.inputs.packages }}; do
+            if [ ! -f "tmp/info/.packageinfo-$pkg" ]; then
+              echo "包 $pkg 注册失败"
+              exit 1
+            fi
+          done
+
+      - name: 编译
+        run: |
+          cd sdk
+          export TERM=linux
+          make defconfig
+          for pkg in ${{ github.event.inputs.packages }}; do
+            make package/$pkg/compile V=s || exit 1
+          done
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: sdk/bin/packages/**/*.apk

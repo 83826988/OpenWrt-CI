@@ -1,0 +1,52 @@
+name: 刷新内核补丁
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '源码仓库'
+        required: true
+        default: 'Cairongzeng/openwrt'
+      source_branch:
+        description: '源码分支'
+        required: true
+        default: 'openhos'
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.source_repo }}
+          ref: ${{ github.event.inputs.source_branch }}
+          path: openwrt
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev gawk git quilt
+
+      - name: 准备环境
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          export TERM=linux
+          make defconfig
+
+      - name: 刷新内核补丁
+        run: |
+          cd openwrt
+          export TERM=linux
+          make target/linux/refresh V=s
+
+      - name: 上传刷新后的补丁
+        uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-patches
+          path: |
+            openwrt/target/linux/generic/hack-6.12/*.patch
+            openwrt/target/linux/generic/pending-6.12/*.patch
+            openwrt/target/linux/airoha/patches-6.12/*.patch
