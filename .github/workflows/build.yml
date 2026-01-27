@@ -126,6 +126,89 @@ jobs:
         make download -j$(nproc) || make download -j1 V=s
         make -j$(nproc) V=sc || make -j1 V=s
 
+    - name: 收集编译错误信息
+      if: failure()
+      run: |
+        echo "=== 编译失败，开始收集错误信息 ==="
+        mkdir -p ${{ github.workspace }}/failure_logs
+        
+        # 收集配置文件
+        cp /mnt/openwrt/openwrt-src/.config ${{ github.workspace }}/failure_logs/ 2>/dev/null || true
+        
+        # 收集diffconfig
+        cd /mnt/openwrt/openwrt-src
+        ./scripts/diffconfig.sh > ${{ github.workspace }}/failure_logs/diffconfig.txt 2>/dev/null || true
+        
+        # 收集编译日志的最后部分
+        if [ -f /mnt/openwrt/openwrt-src/build.log ]; then
+          # 获取最后1000行编译日志
+          tail -n 1000 /mnt/openwrt/openwrt-src/build.log > ${{ github.workspace }}/failure_logs/build_tail.log 2>/dev/null || true
+        fi
+        
+        # 收集下载失败信息
+        find /mnt/openwrt/openwrt-src/dl -name "*.error" -exec cp {} ${{ github.workspace }}/failure_logs/ \; 2>/dev/null || true
+        
+        # 收集补丁失败信息（.rej文件）这是关键！
+        echo "=== 收集补丁失败文件（.rej文件） ==="
+        find /mnt/openwrt/openwrt-src -name "*.rej" -type f | while read rej_file; do
+          echo "找到.rej文件: $rej_file"
+          # 创建相对路径目录结构
+          rej_dir=$(dirname "$rej_file" | sed "s|^/mnt/openwrt/openwrt-src/||")
+          mkdir -p "${{ github.workspace }}/failure_logs/rej_files/$rej_dir" 2>/dev/null || true
+          cp "$rej_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
+          
+          # 尝试找到对应的原始文件
+          base_file="${rej_file%.rej}"
+          if [ -f "$base_file" ]; then
+            cp "$base_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
+          fi
+        done
+        
+        # 收集关键错误日志
+        cd /mnt/openwrt/openwrt-src
+        find . -name "*.log" -type f -exec grep -l "Error\|error\|ERROR\|failed\|FAILED\|FAILED\|Patch failed" {} \; | head -15 | while read logfile; do
+          dir=$(dirname "$logfile")
+          base_dir=$(echo "$dir" | sed 's#^\./##')
+          mkdir -p "${{ github.workspace }}/failure_logs/error_logs/$base_dir" 2>/dev/null || true
+          # 只获取错误相关的最后200行
+          tail -n 200 "$logfile" > "${{ github.workspace }}/failure_logs/error_logs/${base_dir}/$(basename "$logfile").tail" 2>/dev/null || true
+        done
+        
+        # 收集包依赖信息
+        make -n prepare 2>&1 | grep -A5 -B5 "error\|Error\|ERROR\|failed\|FAILED" > ${{ github.workspace }}/failure_logs/dependency_errors.txt 2>/dev/null || true
+        
+        # 创建错误摘要文件
+        {
+          echo "编译失败摘要"
+          echo "================"
+          echo "设备: ${{ env.PROFILE }}"
+          echo "架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}"
+          echo "时间: $(date)"
+          echo ""
+          echo "收集的文件:"
+          find ${{ github.workspace }}/failure_logs -type f | sed 's|.*/failure_logs/||' | sort
+          echo ""
+          echo "调试建议:"
+          echo "1. 检查 .rej 文件查看补丁拒绝的具体内容"
+          echo "2. 比较原始文件和补丁文件的差异"
+          echo "3. 可能需要更新补丁文件以匹配当前内核版本"
+        } > ${{ github.workspace }}/failure_logs/README.txt
+        
+        echo "=== 错误信息收集完成 ==="
+        echo "收集的.rej文件:"
+        find ${{ github.workspace }}/failure_logs -name "*.rej" -type f | sed 's|.*/failure_logs/||'
+        echo ""
+        echo "总文件数:"
+        find ${{ github.workspace }}/failure_logs -type f | wc -l
+
+    - name: 上传编译错误日志
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-${{ env.PROFILE }}-${{ env.BUILD_TIME }}-failure-logs
+        path: ${{ github.workspace }}/failure_logs/
+        retention-days: 7
+
     - name: 准备发布文件
       if: success()
       run: |
@@ -155,4 +238,3 @@ jobs:
         files: ${{ github.workspace }}/release_assets/*
         draft: false
         prerelease: false
-        overwrite_files: true
