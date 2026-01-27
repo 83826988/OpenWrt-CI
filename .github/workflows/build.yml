@@ -94,6 +94,28 @@ jobs:
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
         
+        # 默认中文支持配置
+        echo "# 默认中文支持" >> .config
+        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+        echo "CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y" >> .config
+        
+        # 设置默认语言为中文
+        echo "CONFIG_DEFAULT_luci-theme-bootstrap=y" >> .config
+        echo "CONFIG_DEFAULT_luci-app-opkg=y" >> .config
+        echo "CONFIG_DEFAULT_luci-i18n-base-zh-cn=y" >> .config
+        echo "CONFIG_DEFAULT_luci-i18n-opkg-zh-cn=y" >> .config
+        
+        # 设置区域为亚洲/上海时区
+        echo "CONFIG_DEFAULT_TZ=Asia/Shanghai" >> .config
+        
+        # 设置默认键盘布局为美式键盘
+        echo "CONFIG_DEFAULT_kmod-input-evdev=y" >> .config
+        
+        # 设置默认编码为UTF-8
+        echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
+        echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
+        echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_USING_LOCALE=y" >> .config
+        
         if [ -n "${{ github.event.inputs.packages }}" ]; then
           CLEANED_PACKAGES=$(echo "${{ github.event.inputs.packages }}" | xargs)
           
@@ -102,14 +124,32 @@ jobs:
             
             echo "CONFIG_PACKAGE_${pkg}=y" >> .config
             
+            # 为luci-app添加中文语言包
             if [[ "$pkg" == luci-app-* ]]; then
               app_name="${pkg#luci-app-}"
               zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
               echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
             fi
+            
+            # 为luci-theme添加中文语言包
+            if [[ "$pkg" == luci-theme-* ]]; then
+              theme_name="${pkg#luci-theme-}"
+              zh_cn_pkg="luci-i18n-${theme_name}-zh-cn"
+              echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
+            fi
           done
         fi
         
+        make defconfig
+        
+        # 确保中文语言包被正确选中
+        echo "=== 检查中文语言包配置 ==="
+        if grep -q "CONFIG_PACKAGE_luci=y" .config; then
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y" >> .config
+        fi
+        
+        # 重新应用配置
         make defconfig
         
         echo "=== 配置差异 (diffconfig) ==="
@@ -118,6 +158,20 @@ jobs:
         echo ""
         echo "=== 所有已选中的软件包列表 ==="
         grep '^CONFIG_PACKAGE_.*=y' .config | sed 's/^CONFIG_PACKAGE_//;s/=y$//' | sort
+
+    - name: 应用中文默认设置
+      run: |
+        cd /mnt/openwrt/openwrt-src
+        # 修改LuCI默认设置为中文
+        if [ -f feeds/luci/modules/luci-base/root/etc/config/luci ]; then
+          sed -i "s/option lang 'auto'/option lang 'zh_cn'/" feeds/luci/modules/luci-base/root/etc/config/luci
+        fi
+        
+        # 设置默认时区
+        if [ -f package/base-files/files/bin/config_generate ]; then
+          sed -i "s/timezone='UTC'/timezone='CST-8'/" package/base-files/files/bin/config_generate
+          sed -i "s/zonename='UTC'/zonename='Asia\/Shanghai'/" package/base-files/files/bin/config_generate
+        fi
 
     - name: 编译固件
       run: |
@@ -141,23 +195,20 @@ jobs:
         
         # 收集编译日志的最后部分
         if [ -f /mnt/openwrt/openwrt-src/build.log ]; then
-          # 获取最后1000行编译日志
           tail -n 1000 /mnt/openwrt/openwrt-src/build.log > ${{ github.workspace }}/failure_logs/build_tail.log 2>/dev/null || true
         fi
         
         # 收集下载失败信息
         find /mnt/openwrt/openwrt-src/dl -name "*.error" -exec cp {} ${{ github.workspace }}/failure_logs/ \; 2>/dev/null || true
         
-        # 收集补丁失败信息（.rej文件）这是关键！
+        # 收集补丁失败信息（.rej文件）
         echo "=== 收集补丁失败文件（.rej文件） ==="
         find /mnt/openwrt/openwrt-src -name "*.rej" -type f | while read rej_file; do
           echo "找到.rej文件: $rej_file"
-          # 创建相对路径目录结构
           rej_dir=$(dirname "$rej_file" | sed "s|^/mnt/openwrt/openwrt-src/||")
           mkdir -p "${{ github.workspace }}/failure_logs/rej_files/$rej_dir" 2>/dev/null || true
           cp "$rej_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
           
-          # 尝试找到对应的原始文件
           base_file="${rej_file%.rej}"
           if [ -f "$base_file" ]; then
             cp "$base_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
@@ -170,7 +221,6 @@ jobs:
           dir=$(dirname "$logfile")
           base_dir=$(echo "$dir" | sed 's#^\./##')
           mkdir -p "${{ github.workspace }}/failure_logs/error_logs/$base_dir" 2>/dev/null || true
-          # 只获取错误相关的最后200行
           tail -n 200 "$logfile" > "${{ github.workspace }}/failure_logs/error_logs/${base_dir}/$(basename "$logfile").tail" 2>/dev/null || true
         done
         
