@@ -42,7 +42,7 @@ on:
 jobs:
   build-firmware:
     name: 构建 ${{ github.event.inputs.profile }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
       contents: write
@@ -94,9 +94,14 @@ jobs:
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
         
+        make defconfig
+        
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
         
-        echo "CONFIG_DEFAULT_TZ=Asia/Shanghai" >> .config
+        echo 'CONFIG_DEFAULT_TZ="Asia/Shanghai"' >> .config
+        echo 'CONFIG_DEFAULT_LUCI_LANG="zh_cn"' >> .config
         
         echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
         echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
@@ -124,13 +129,11 @@ jobs:
           done
         fi
         
-        make defconfig
+        yes "" | make oldconfig
         
-        # 显示配置差异
         echo "配置差异:"
         ./scripts/diffconfig.sh
         
-        # 检查未生效的包
         if [ -n "$CLEANED_PACKAGES" ]; then
           MISSING=""
           for pkg in $CLEANED_PACKAGES; do
