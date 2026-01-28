@@ -36,7 +36,7 @@ on:
       packages:
         description: '软件包'
         required: false
-        default: 'luci-app-appfilter luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-design tailscale luci'
+        default: 'luci-app-appfilter luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-design luci-theme-argon tailscale'
         type: string
 
 jobs:
