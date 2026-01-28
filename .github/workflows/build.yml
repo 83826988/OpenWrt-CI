@@ -14,7 +14,7 @@ on:
         default: 'openwrt-25.12'
         type: string
       custom_feeds:
-        description: '软件源（src-git luci https://github.com/openwrt/luci.git）'
+        description: '软件源'
         required: false
         default: ''
         type: string
@@ -34,9 +34,9 @@ on:
         default: 'bell_xg-040g-md'
         type: string
       packages:
-        description: '软件（使用空格分隔）'
+        description: '软件包'
         required: false
-        default: 'luci-app-appfilter luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-app-wol luci-theme-argon tailscale luci'
+        default: 'luci-app-appfilter luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-design tailscale luci'
         type: string
 
 jobs:
@@ -77,7 +77,7 @@ jobs:
     - name: 安装编译工具
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libpython3.12-dev libssl-dev libtool libz-dev python3 python3-distutils python3-setuptools python3-pip python3.12 python3.12-dev rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev || true
+        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libpython3.12-dev libssl-dev libtool libz-dev python3 python3-distutils python3-setuptools python3-pip python3.12 python3.12-dev rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
 
     - name: 更新feeds
       run: |
@@ -94,24 +94,10 @@ jobs:
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
         echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
         
-        # 默认中文支持配置
-        echo "# 默认中文支持" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-        echo "CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y" >> .config
         
-        # 设置默认语言为中文
-        echo "CONFIG_DEFAULT_luci-theme-bootstrap=y" >> .config
-        echo "CONFIG_DEFAULT_luci-app-opkg=y" >> .config
-        echo "CONFIG_DEFAULT_luci-i18n-base-zh-cn=y" >> .config
-        echo "CONFIG_DEFAULT_luci-i18n-opkg-zh-cn=y" >> .config
-        
-        # 设置区域为亚洲/上海时区
         echo "CONFIG_DEFAULT_TZ=Asia/Shanghai" >> .config
         
-        # 设置默认键盘布局为美式键盘
-        echo "CONFIG_DEFAULT_kmod-input-evdev=y" >> .config
-        
-        # 设置默认编码为UTF-8
         echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
         echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
         echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_USING_LOCALE=y" >> .config
@@ -124,14 +110,12 @@ jobs:
             
             echo "CONFIG_PACKAGE_${pkg}=y" >> .config
             
-            # 为luci-app添加中文语言包
             if [[ "$pkg" == luci-app-* ]]; then
               app_name="${pkg#luci-app-}"
               zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
               echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
             fi
             
-            # 为luci-theme添加中文语言包
             if [[ "$pkg" == luci-theme-* ]]; then
               theme_name="${pkg#luci-theme-}"
               zh_cn_pkg="luci-i18n-${theme_name}-zh-cn"
@@ -142,35 +126,22 @@ jobs:
         
         make defconfig
         
-        # 确保中文语言包被正确选中
-        echo "=== 检查中文语言包配置 ==="
-        if grep -q "CONFIG_PACKAGE_luci=y" .config; then
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-          echo "CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y" >> .config
-        fi
-        
-        # 重新应用配置
-        make defconfig
-        
-        echo "=== 配置差异 (diffconfig) ==="
+        # 显示配置差异
+        echo "配置差异:"
         ./scripts/diffconfig.sh
         
-        echo ""
-        echo "=== 所有已选中的软件包列表 ==="
-        grep '^CONFIG_PACKAGE_.*=y' .config | sed 's/^CONFIG_PACKAGE_//;s/=y$//' | sort
-
-    - name: 应用中文默认设置
-      run: |
-        cd /mnt/openwrt/openwrt-src
-        # 修改LuCI默认设置为中文
-        if [ -f feeds/luci/modules/luci-base/root/etc/config/luci ]; then
-          sed -i "s/option lang 'auto'/option lang 'zh_cn'/" feeds/luci/modules/luci-base/root/etc/config/luci
-        fi
-        
-        # 设置默认时区
-        if [ -f package/base-files/files/bin/config_generate ]; then
-          sed -i "s/timezone='UTC'/timezone='CST-8'/" package/base-files/files/bin/config_generate
-          sed -i "s/zonename='UTC'/zonename='Asia\/Shanghai'/" package/base-files/files/bin/config_generate
+        # 检查未生效的包
+        if [ -n "$CLEANED_PACKAGES" ]; then
+          MISSING=""
+          for pkg in $CLEANED_PACKAGES; do
+            if ! grep -q "^CONFIG_PACKAGE_${pkg}=[ym]" .config; then
+              MISSING="$MISSING $pkg"
+            fi
+          done
+          
+          if [ -n "$MISSING" ]; then
+            echo "未生效的包:$MISSING"
+          fi
         fi
 
     - name: 编译固件
@@ -179,85 +150,6 @@ jobs:
         set -e
         make download -j$(nproc) || make download -j1 V=s
         make -j$(nproc) V=sc || make -j1 V=s
-
-    - name: 收集编译错误信息
-      if: failure()
-      run: |
-        echo "=== 编译失败，开始收集错误信息 ==="
-        mkdir -p ${{ github.workspace }}/failure_logs
-        
-        # 收集配置文件
-        cp /mnt/openwrt/openwrt-src/.config ${{ github.workspace }}/failure_logs/ 2>/dev/null || true
-        
-        # 收集diffconfig
-        cd /mnt/openwrt/openwrt-src
-        ./scripts/diffconfig.sh > ${{ github.workspace }}/failure_logs/diffconfig.txt 2>/dev/null || true
-        
-        # 收集编译日志的最后部分
-        if [ -f /mnt/openwrt/openwrt-src/build.log ]; then
-          tail -n 1000 /mnt/openwrt/openwrt-src/build.log > ${{ github.workspace }}/failure_logs/build_tail.log 2>/dev/null || true
-        fi
-        
-        # 收集下载失败信息
-        find /mnt/openwrt/openwrt-src/dl -name "*.error" -exec cp {} ${{ github.workspace }}/failure_logs/ \; 2>/dev/null || true
-        
-        # 收集补丁失败信息（.rej文件）
-        echo "=== 收集补丁失败文件（.rej文件） ==="
-        find /mnt/openwrt/openwrt-src -name "*.rej" -type f | while read rej_file; do
-          echo "找到.rej文件: $rej_file"
-          rej_dir=$(dirname "$rej_file" | sed "s|^/mnt/openwrt/openwrt-src/||")
-          mkdir -p "${{ github.workspace }}/failure_logs/rej_files/$rej_dir" 2>/dev/null || true
-          cp "$rej_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
-          
-          base_file="${rej_file%.rej}"
-          if [ -f "$base_file" ]; then
-            cp "$base_file" "${{ github.workspace }}/failure_logs/rej_files/$rej_dir/" 2>/dev/null || true
-          fi
-        done
-        
-        # 收集关键错误日志
-        cd /mnt/openwrt/openwrt-src
-        find . -name "*.log" -type f -exec grep -l "Error\|error\|ERROR\|failed\|FAILED\|FAILED\|Patch failed" {} \; | head -15 | while read logfile; do
-          dir=$(dirname "$logfile")
-          base_dir=$(echo "$dir" | sed 's#^\./##')
-          mkdir -p "${{ github.workspace }}/failure_logs/error_logs/$base_dir" 2>/dev/null || true
-          tail -n 200 "$logfile" > "${{ github.workspace }}/failure_logs/error_logs/${base_dir}/$(basename "$logfile").tail" 2>/dev/null || true
-        done
-        
-        # 收集包依赖信息
-        make -n prepare 2>&1 | grep -A5 -B5 "error\|Error\|ERROR\|failed\|FAILED" > ${{ github.workspace }}/failure_logs/dependency_errors.txt 2>/dev/null || true
-        
-        # 创建错误摘要文件
-        {
-          echo "编译失败摘要"
-          echo "================"
-          echo "设备: ${{ env.PROFILE }}"
-          echo "架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}"
-          echo "时间: $(date)"
-          echo ""
-          echo "收集的文件:"
-          find ${{ github.workspace }}/failure_logs -type f | sed 's|.*/failure_logs/||' | sort
-          echo ""
-          echo "调试建议:"
-          echo "1. 检查 .rej 文件查看补丁拒绝的具体内容"
-          echo "2. 比较原始文件和补丁文件的差异"
-          echo "3. 可能需要更新补丁文件以匹配当前内核版本"
-        } > ${{ github.workspace }}/failure_logs/README.txt
-        
-        echo "=== 错误信息收集完成 ==="
-        echo "收集的.rej文件:"
-        find ${{ github.workspace }}/failure_logs -name "*.rej" -type f | sed 's|.*/failure_logs/||'
-        echo ""
-        echo "总文件数:"
-        find ${{ github.workspace }}/failure_logs -type f | wc -l
-
-    - name: 上传编译错误日志
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: openwrt-${{ env.PROFILE }}-${{ env.BUILD_TIME }}-failure-logs
-        path: ${{ github.workspace }}/failure_logs/
-        retention-days: 7
 
     - name: 准备发布文件
       if: success()
