@@ -48,186 +48,184 @@ jobs:
       contents: write
 
     steps:
-    - name: 初始化环境
-      run: |
-        echo "BUILD_TIME=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
-        echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
-        echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
-        echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
-        sudo mkdir -p /mnt/openwrt
-        sudo chown -R runner:runner /mnt/openwrt
+      - name: 初始化环境
+        run: |
+          echo "BUILD_TIME=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+          echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
+          echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
+          echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
+          echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
+          echo "CUSTOM_FEEDS=${{ github.event.inputs.custom_feeds }}" >> $GITHUB_ENV
+          sudo mkdir -p /mnt/openwrt
+          sudo chown -R runner:runner /mnt/openwrt
 
-    - name: 检出源码
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ github.event.inputs.source_repo }}
-        ref: ${{ github.event.inputs.source_branch }}
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.source_repo }}
+          ref: ${{ github.event.inputs.source_branch }}
 
-    - name: 移动源码
-      run: |
-        mv ${{ github.workspace }} /mnt/openwrt/openwrt-src
-        ln -sfn /mnt/openwrt/openwrt-src ${{ github.workspace }}
+      - name: 移动源码
+        run: |
+          mv ${{ github.workspace }} /mnt/openwrt/openwrt-src
+          ln -sfn /mnt/openwrt/openwrt-src ${{ github.workspace }}
 
-    - name: 自定义软件源
-      run: |
-        cd /mnt/openwrt/openwrt-src
-        echo 'src-git design https://github.com/cairongzeng/luci-theme-design.git' >> feeds.conf.default
-        if [ -n "${{ github.event.inputs.custom_feeds }}" ]; then
-          echo "${{ github.event.inputs.custom_feeds }}" | sed '/^$/d' >> feeds.conf.default
-        fi
-
-    - name: 安装编译工具
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
-
-    - name: 更新feeds
-      run: |
-        cd /mnt/openwrt/openwrt-src
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-
-    - name: 生成配置
-      run: |
-        cd /mnt/openwrt/openwrt-src
-        set -e
-        
-        echo "CONFIG_TARGET_${TARGET}=y" >> .config
-        echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
-        echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
-        
-        make defconfig
-        
-        echo "CONFIG_PACKAGE_luci=y" >> .config
-        echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
-        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-        
-        echo 'CONFIG_DEFAULT_TZ="Asia/Shanghai"' >> .config
-        echo 'CONFIG_DEFAULT_LUCI_LANG="zh_cn"' >> .config
-        echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
-        echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
-        echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
-        
-        echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
-        echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
-        echo 'CONFIG_PACKAGE_luci-theme-design-zh-cn=y' >> .config
-        
-        echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
-        echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
-        echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_USING_LOCALE=y" >> .config
-        
-        if [ -n "${{ github.event.inputs.packages }}" ]; then
-          CLEANED_PACKAGES=$(echo "${{ github.event.inputs.packages }}" | xargs)
-          
-          for pkg in $CLEANED_PACKAGES; do
-            [ -z "$pkg" ] && continue
-            
-            echo "CONFIG_PACKAGE_${pkg}=y" >> .config
-            
-            if [[ "$pkg" == luci-app-* ]]; then
-              app_name="${pkg#luci-app-}"
-              zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
-              echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
-            fi
-            
-            if [[ "$pkg" == luci-theme-* ]]; then
-              theme_name="${pkg#luci-theme-}"
-              zh_cn_pkg="luci-i18n-${theme_name}-zh-cn"
-              echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
-            fi
-          done
-        fi
-        
-        yes "" | make oldconfig
-        
-        if [ -f "package/base-files/files/etc/immortalwrt_release" ] || \
-           grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
-            REPO_TYPE="immortalwrt"
-        else
-            REPO_TYPE="openwrt"
-        fi
-        
-        if [ "$REPO_TYPE" = "immortalwrt" ]; then
-            APK_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
-            OPKG_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
-        else
-            APK_MIRROR="https://mirrors.pku.edu.cn/openwrt"
-            OPKG_MIRROR="https://mirrors.pku.edu.cn/openwrt"
-        fi
-        
-        APK_REPO_FILE="package/base-files/files/etc/apk/repositories"
-        OPKG_DISTFEEDS_FILE="package/base-files/files/etc/opkg/distfeeds.conf"
-        
-        if [ -f "$APK_REPO_FILE" ]; then
-            sed -i "s|https://downloads\\.immortalwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
-            sed -i "s|https://downloads\\.openwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
-        fi
-        
-        if [ -f "$OPKG_DISTFEEDS_FILE" ]; then
-            sed -i "s|https://downloads\\.immortalwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
-            sed -i "s|https://downloads\\.openwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
-        fi
-        
-        THEME_FOOTER="feeds/luci/themes/luci-theme-design/htdocs/luci-static/design/footer.htm"
-        if [ -f "$THEME_FOOTER" ]; then
-          sed -i '/<\/footer>/i \
-<div style="text-align: center; padding: 10px; font-size: 12px; color: #666; border-top: 1px solid #eee; margin-top: 20px;">\
-<strong>OpenROS Firmware</strong><br>\
-Technical Support: <strong>WeChat_CRZ</strong> | QQ: <strong>83826988</strong> | Tel: <strong>0595-85590055</strong>\
-</div>' "$THEME_FOOTER"
-        fi
-        
-        ./scripts/diffconfig.sh
-        
-        if [ -n "$CLEANED_PACKAGES" ]; then
-          MISSING=""
-          for pkg in $CLEANED_PACKAGES; do
-            if ! grep -q "^CONFIG_PACKAGE_${pkg}=[ym]" .config; then
-              MISSING="$MISSING $pkg"
-            fi
-          done
-          
-          if [ -n "$MISSING" ]; then
-            echo "未生效的包:$MISSING"
+      - name: 自定义软件源
+        run: |
+          cd /mnt/openwrt/openwrt-src
+          echo 'src-git design https://github.com/cairongzeng/luci-theme-design.git' >> feeds.conf.default
+          if [ -n "${CUSTOM_FEEDS}" ]; then
+            echo "${CUSTOM_FEEDS}" | sed '/^$/d' >> feeds.conf.default
           fi
-        fi
 
-    - name: 编译固件
-      run: |
-        cd /mnt/openwrt/openwrt-src
-        set -e
-        make download -j$(nproc) || make download -j1 V=s
-        make -j$(nproc) V=sc || make -j1 V=s
+      - name: 安装编译工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
 
-    - name: 准备发布文件
-      if: success()
-      run: |
-        mkdir -p ${{ github.workspace }}/release_assets
-        cp -r /mnt/openwrt/openwrt-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
+      - name: 更新feeds
+        run: |
+          cd /mnt/openwrt/openwrt-src
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: 上传固件
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
-        path: ${{ github.workspace }}/release_assets/
-        retention-days: 1
+      - name: 生成配置
+        run: |
+          cd /mnt/openwrt/openwrt-src
+          set -e
+          
+          echo "CONFIG_TARGET_${TARGET}=y" >> .config
+          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
+          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
+          
+          make defconfig
+          
+          echo "CONFIG_PACKAGE_luci=y" >> .config
+          echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+          
+          echo 'CONFIG_DEFAULT_TZ="Asia/Shanghai"' >> .config
+          echo 'CONFIG_DEFAULT_LUCI_LANG="zh_cn"' >> .config
+          echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
+          echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
+          echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
+          
+          echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-design-zh-cn=y' >> .config
+          
+          echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
+          echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
+          echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_USING_LOCALE=y" >> .config
+          
+          if [ -n "${PACKAGES}" ]; then
+            CLEANED_PACKAGES=$(echo "${PACKAGES}" | xargs)
+            
+            for pkg in $CLEANED_PACKAGES; do
+              [ -z "$pkg" ] && continue
+              
+              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+              
+              if [[ "$pkg" == luci-app-* ]]; then
+                app_name="${pkg#luci-app-}"
+                zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
+                echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
+              fi
+              
+              if [[ "$pkg" == luci-theme-* ]]; then
+                theme_name="${pkg#luci-theme-}"
+                zh_cn_pkg="luci-i18n-${theme_name}-zh-cn"
+                echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
+              fi
+            done
+          fi
+          
+          yes "" | make oldconfig
+          
+          if [ -f "package/base-files/files/etc/immortalwrt_release" ] || \
+             grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
+              REPO_TYPE="immortalwrt"
+          else
+              REPO_TYPE="openwrt"
+          fi
+          
+          if [ "$REPO_TYPE" = "immortalwrt" ]; then
+              APK_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
+              OPKG_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
+          else
+              APK_MIRROR="https://mirrors.pku.edu.cn/openwrt"
+              OPKG_MIRROR="https://mirrors.pku.edu.cn/openwrt"
+          fi
+          
+          APK_REPO_FILE="package/base-files/files/etc/apk/repositories"
+          OPKG_DISTFEEDS_FILE="package/base-files/files/etc/opkg/distfeeds.conf"
+          
+          if [ -f "$APK_REPO_FILE" ]; then
+              sed -i "s|https://downloads\\.immortalwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
+              sed -i "s|https://downloads\\.openwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
+          fi
+          
+          if [ -f "$OPKG_DISTFEEDS_FILE" ]; then
+              sed -i "s|https://downloads\\.immortalwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
+              sed -i "s|https://downloads\\.openwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
+          fi
+          
+          THEME_FOOTER="feeds/luci/themes/luci-theme-design/htdocs/luci-static/design/footer.htm"
+          if [ -f "$THEME_FOOTER" ]; then
+            sed -i '/<\/footer>/i <div style="text-align: center; padding: 10px; font-size: 12px; color: #666; border-top: 1px solid #eee; margin-top: 20px;"><strong>OpenROS Firmware</strong><br>Technical Support: <strong>WeChat_CRZ</strong> | QQ: <strong>83826988</strong> | Tel: <strong>0595-85590055</strong></div>' "$THEME_FOOTER"
+          fi
+          
+          ./scripts/diffconfig.sh
+          
+          if [ -n "$CLEANED_PACKAGES" ]; then
+            MISSING=""
+            for pkg in $CLEANED_PACKAGES; do
+              if ! grep -q "^CONFIG_PACKAGE_${pkg}=[ym]" .config; then
+                MISSING="$MISSING $pkg"
+              fi
+            done
+            
+            if [ -n "$MISSING" ]; then
+              echo "未生效的包:$MISSING"
+            fi
+          fi
 
-    - name: 创建发布
-      if: success()
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
-        name: OpenROS ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
-        body: |
-          设备: ${{ env.PROFILE }}
-          架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
-          主机名: OpenROS
-          技术支持: WeChat_CRZ | QQ: 83826988
-          包含软件: ${{ github.event.inputs.packages }}
-          编译时间: ${{ env.BUILD_TIME }}
-        files: ${{ github.workspace }}/release_assets/*
-        draft: false
-        prerelease: false
+      - name: 编译固件
+        run: |
+          cd /mnt/openwrt/openwrt-src
+          set -e
+          make download -j$(nproc) || make download -j1 V=s
+          make -j$(nproc) V=sc || make -j1 V=s
+
+      - name: 准备发布文件
+        if: success()
+        run: |
+          mkdir -p ${{ github.workspace }}/release_assets
+          cp -r /mnt/openwrt/openwrt-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
+
+      - name: 上传固件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+          path: ${{ github.workspace }}/release_assets/
+          retention-days: 1
+
+      - name: 创建发布
+        if: success()
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+          name: OpenROS ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
+          body: |
+            设备: ${{ env.PROFILE }}
+            架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
+            主机名: OpenROS
+            技术支持: WeChat_CRZ | QQ: 83826988
+            包含软件: ${{ github.event.inputs.packages }}
+            编译时间: ${{ env.BUILD_TIME }}
+          files: ${{ github.workspace }}/release_assets/*
+          draft: false
+          prerelease: false
