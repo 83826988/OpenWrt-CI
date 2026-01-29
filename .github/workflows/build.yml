@@ -110,9 +110,9 @@ jobs:
           echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
           echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
           
-          echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-bootstrap=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-i18n-bootstrap-zh-cn=y' >> .config
           echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-theme-design-zh-cn=y' >> .config
           
           echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
           echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
@@ -142,8 +142,7 @@ jobs:
           
           yes "" | make oldconfig
           
-          if [ -f "package/base-files/files/etc/immortalwrt_release" ] || \
-             grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
+          if [ -f "package/base-files/files/etc/immortalwrt_release" ] || grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
               REPO_TYPE="immortalwrt"
           else
               REPO_TYPE="openwrt"
@@ -168,11 +167,6 @@ jobs:
           if [ -f "$OPKG_DISTFEEDS_FILE" ]; then
               sed -i "s|https://downloads\\.immortalwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
               sed -i "s|https://downloads\\.openwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
-          fi
-          
-          THEME_FOOTER="feeds/luci/themes/luci-theme-design/htdocs/luci-static/design/footer.htm"
-          if [ -f "$THEME_FOOTER" ]; then
-            sed -i '/<\/footer>/i <div style="text-align: center; padding: 10px; font-size: 12px; color: #666; border-top: 1px solid #eee; margin-top: 20px;"><strong>OpenROS Firmware</strong><br>Technical Support: <strong>WeChat_CRZ</strong> | QQ: <strong>83826988</strong> | Tel: <strong>0595-85590055</strong></div>' "$THEME_FOOTER"
           fi
           
           ./scripts/diffconfig.sh
@@ -224,7 +218,6 @@ jobs:
             架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
             主机名: OpenROS
             技术支持: WeChat_CRZ | QQ: 83826988
-            编译时间: ${{ env.BUILD_TIME }}
           files: ${{ github.workspace }}/release_assets/*
           draft: false
           prerelease: false
