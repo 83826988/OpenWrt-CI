@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       source_repo:
-        description: '仓库'
+        description: '源码仓库'
         required: true
         default: 'openwrt/openwrt'
         type: string
       source_branch:
-        description: '分支'
+        description: '源码分支'
         required: true
         default: 'openwrt-25.12'
         type: string
@@ -19,22 +19,22 @@ on:
         default: ''
         type: string
       target:
-        description: '架构'
+        description: '设备架构'
         required: true
         default: 'airoha'
         type: string
       subtarget:
-        description: '芯片'
+        description: '设备芯片'
         required: true
         default: 'an7581'
         type: string
       profile:
-        description: '配置'
+        description: '型号配置'
         required: true
         default: 'bell_xg-040g-md'
         type: string
       packages:
-        description: '软件包'
+        description: '定制软件'
         required: false
         default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-argon tailscale'
         type: string
@@ -224,7 +224,6 @@ jobs:
             架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
             主机名: OpenROS
             技术支持: WeChat_CRZ | QQ: 83826988
-            包含软件: ${{ github.event.inputs.packages }}
             编译时间: ${{ env.BUILD_TIME }}
           files: ${{ github.workspace }}/release_assets/*
           draft: false
