@@ -1,4 +1,4 @@
-name: OpenWrt Builder
+name: OpenROS Builder
 
 on:
   workflow_dispatch:
@@ -36,7 +36,7 @@ on:
       packages:
         description: '软件包'
         required: false
-        default: 'luci-app-appfilter luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-design luci-theme-argon tailscale'
+        default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-argon tailscale'
         type: string
 
 jobs:
@@ -69,15 +69,17 @@ jobs:
         ln -sfn /mnt/openwrt/openwrt-src ${{ github.workspace }}
 
     - name: 自定义软件源
-      if: github.event.inputs.custom_feeds != ''
       run: |
         cd /mnt/openwrt/openwrt-src
-        echo "${{ github.event.inputs.custom_feeds }}" | sed '/^$/d' >> feeds.conf.default
+        echo 'src-git design https://github.com/cairongzeng/luci-theme-design.git' >> feeds.conf.default
+        if [ -n "${{ github.event.inputs.custom_feeds }}" ]; then
+          echo "${{ github.event.inputs.custom_feeds }}" | sed '/^$/d' >> feeds.conf.default
+        fi
 
     - name: 安装编译工具
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libpython3.12-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3.12 python3.12-dev rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
+        sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
 
     - name: 更新feeds
       run: |
@@ -102,6 +104,13 @@ jobs:
         
         echo 'CONFIG_DEFAULT_TZ="Asia/Shanghai"' >> .config
         echo 'CONFIG_DEFAULT_LUCI_LANG="zh_cn"' >> .config
+        echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
+        echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
+        echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
+        
+        echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
+        echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
+        echo 'CONFIG_PACKAGE_luci-theme-design-zh-cn=y' >> .config
         
         echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
         echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
@@ -131,7 +140,43 @@ jobs:
         
         yes "" | make oldconfig
         
-        echo "配置差异:"
+        if [ -f "package/base-files/files/etc/immortalwrt_release" ] || \
+           grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
+            REPO_TYPE="immortalwrt"
+        else
+            REPO_TYPE="openwrt"
+        fi
+        
+        if [ "$REPO_TYPE" = "immortalwrt" ]; then
+            APK_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
+            OPKG_MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
+        else
+            APK_MIRROR="https://mirrors.pku.edu.cn/openwrt"
+            OPKG_MIRROR="https://mirrors.pku.edu.cn/openwrt"
+        fi
+        
+        APK_REPO_FILE="package/base-files/files/etc/apk/repositories"
+        OPKG_DISTFEEDS_FILE="package/base-files/files/etc/opkg/distfeeds.conf"
+        
+        if [ -f "$APK_REPO_FILE" ]; then
+            sed -i "s|https://downloads\\.immortalwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
+            sed -i "s|https://downloads\\.openwrt\\.org|$APK_MIRROR|g" "$APK_REPO_FILE"
+        fi
+        
+        if [ -f "$OPKG_DISTFEEDS_FILE" ]; then
+            sed -i "s|https://downloads\\.immortalwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
+            sed -i "s|https://downloads\\.openwrt\\.org|$OPKG_MIRROR|g" "$OPKG_DISTFEEDS_FILE"
+        fi
+        
+        THEME_FOOTER="feeds/luci/themes/luci-theme-design/htdocs/luci-static/design/footer.htm"
+        if [ -f "$THEME_FOOTER" ]; then
+          sed -i '/<\/footer>/i \
+<div style="text-align: center; padding: 10px; font-size: 12px; color: #666; border-top: 1px solid #eee; margin-top: 20px;">\
+<strong>OpenROS Firmware</strong><br>\
+Technical Support: <strong>WeChat_CRZ</strong> | QQ: <strong>83826988</strong> | Tel: <strong>0595-85590055</strong>\
+</div>' "$THEME_FOOTER"
+        fi
+        
         ./scripts/diffconfig.sh
         
         if [ -n "$CLEANED_PACKAGES" ]; then
@@ -164,7 +209,7 @@ jobs:
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+        name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
         path: ${{ github.workspace }}/release_assets/
         retention-days: 1
 
@@ -174,12 +219,15 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: openwrt-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
-        name: OpenWrt ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
+        tag_name: openros-${{ env.PROFILE }}-${{ env.BUILD_TIME }}
+        name: OpenROS ${{ env.PROFILE }} ${{ env.BUILD_TIME }}
         body: |
           设备: ${{ env.PROFILE }}
           架构: ${{ env.TARGET }}/${{ env.SUBTARGET }}
-          软件: ${{ github.event.inputs.packages }}
+          主机名: OpenROS
+          技术支持: WeChat_CRZ | QQ: 83826988
+          包含软件: ${{ github.event.inputs.packages }}
+          编译时间: ${{ env.BUILD_TIME }}
         files: ${{ github.workspace }}/release_assets/*
         draft: false
         prerelease: false
