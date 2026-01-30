@@ -90,6 +90,7 @@ jobs:
           cd /mnt/openwrt/openwrt-src
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          ./scripts/feeds list
 
       - name: 生成配置
         run: |
@@ -112,9 +113,10 @@ jobs:
           echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
           echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
           
-          echo 'CONFIG_PACKAGE_luci-theme-bootstrap=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-i18n-bootstrap-zh-cn=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
+          echo 'CONFIG_LUCI_THEME="design"' >> .config
           echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-i18n-design-zh-cn=y' >> .config
           
           echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
           echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
@@ -172,6 +174,7 @@ jobs:
             for pkg in $CLEANED_PACKAGES; do
               if ! grep -q "^CONFIG_PACKAGE_${pkg}=[ym]" .config; then
                 MISSING="$MISSING $pkg"
+                ./scripts/feeds list | grep -i "$pkg"
               fi
             done
             
