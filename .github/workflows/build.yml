@@ -59,11 +59,13 @@ jobs:
           sudo mkdir -p /mnt/openwrt
           sudo chown -R runner:runner /mnt/openwrt
 
-      - name: 检出并移动源码
+      - name: 检出源码
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.source_repo }}
           ref: ${{ github.event.inputs.source_branch }}
+
+      - name: 移动源码
         run: |
           mv ${{ github.workspace }} /mnt/openwrt/openwrt-src
           ln -sfn /mnt/openwrt/openwrt-src ${{ github.workspace }}
@@ -73,7 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
 
-      - name: 配置并更新Feeds
+      - name: 配置和更新Feeds
         run: |
           cd /mnt/openwrt/openwrt-src
           
@@ -144,7 +146,7 @@ jobs:
             fi
           fi
 
-      - name: 生成并修改配置
+      - name: 生成和修改配置
         run: |
           cd /mnt/openwrt/openwrt-src
           set -e
