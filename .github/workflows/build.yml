@@ -74,8 +74,6 @@ jobs:
         run: |
           cd /mnt/openwrt/openwrt-src
           echo 'src-git design https://github.com/cairongzeng/luci-theme-design.git' >> feeds.conf.default
-          echo 'src-git immortalwrt_packages https://github.com/immortalwrt/packages.git' >> feeds.conf.default
-          echo 'src-git immortalwrt_luci https://github.com/immortalwrt/luci.git' >> feeds.conf.default
           if [ -n "${CUSTOM_FEEDS}" ]; then
             echo "${CUSTOM_FEEDS}" | sed '/^$/d' >> feeds.conf.default
           fi
@@ -90,6 +88,57 @@ jobs:
           cd /mnt/openwrt/openwrt-src
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          
+          if [ -n "${PACKAGES}" ]; then
+            CLEANED_PACKAGES=$(echo "${PACKAGES}" | xargs)
+            mkdir -p feeds/missing_packages/luci/applications
+            mkdir -p feeds/missing_packages/packages
+            
+            for pkg in $CLEANED_PACKAGES; do
+              [ -z "$pkg" ] && continue
+              
+              if ! ./scripts/feeds list | grep -q "^$pkg"; then
+                
+                if [[ "$pkg" == luci-app-* ]]; then
+                  mkdir -p /tmp/immortalwrt-luci
+                  cd /tmp/immortalwrt-luci
+                  git init
+                  git remote add origin https://github.com/immortalwrt/luci.git
+                  git config core.sparsecheckout true
+                  echo "applications/$pkg" >> .git/info/sparse-checkout
+                  git pull --depth=1 origin master || git pull --depth=1 origin main
+                  
+                  if [ -d "applications/$pkg" ]; then
+                    cp -r "applications/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/luci/applications/"
+                  fi
+                  
+                  cd /mnt/openwrt/openwrt-src
+                else
+                  mkdir -p /tmp/immortalwrt-packages
+                  cd /tmp/immortalwrt-packages
+                  git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git
+                  cd packages
+                  
+                  for dir in net misc admin routing telephony; do
+                    if [ -d "$dir/$pkg" ]; then
+                      mkdir -p "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir"
+                      cp -r "$dir/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir/"
+                      break
+                    fi
+                  done
+                  
+                  cd /mnt/openwrt/openwrt-src
+                fi
+              fi
+            done
+            
+            if [ -n "$(find feeds/missing_packages -type f -name 'Makefile' 2>/dev/null | head -1)" ]; then
+              echo 'src-link missing_packages feeds/missing_packages' >> feeds.conf.default
+              ./scripts/feeds update missing_packages
+              ./scripts/feeds install -a
+            fi
+          fi
+          
           ./scripts/feeds list
 
       - name: 生成配置
@@ -114,6 +163,7 @@ jobs:
           echo 'CONFIG_VERSION_NICK="WeChat | QQ 83826988"' >> .config
           
           echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
+          echo 'CONFIG_PACKAGE_luci-i18n-bootstrap-zh-cn=n' >> .config
           echo 'CONFIG_LUCI_THEME="design"' >> .config
           echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
           echo 'CONFIG_PACKAGE_luci-i18n-design-zh-cn=y' >> .config
@@ -195,6 +245,16 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/release_assets
           cp -r /mnt/openwrt/openwrt-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
+          
+          PACKAGES_DIR="/mnt/openwrt/openwrt-src/bin/packages"
+          if [ -d "$PACKAGES_DIR" ]; then
+            echo "正在打包软件包目录..."
+            cd /mnt/openwrt/openwrt-src/bin
+            tar -czf ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz packages/
+            echo "软件包打包完成"
+          else
+            echo "警告: packages目录不存在"
+          fi
 
       - name: 上传固件
         if: success()
