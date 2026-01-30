@@ -100,33 +100,43 @@ jobs:
               if ! ./scripts/feeds list | grep -q "^$pkg"; then
                 
                 if [[ "$pkg" == luci-app-* ]]; then
-                  mkdir -p /tmp/immortalwrt-luci
-                  cd /tmp/immortalwrt-luci
+                  LUCI_TEMP_DIR="/tmp/luci-$pkg-$(date +%s)"
+                  rm -rf "$LUCI_TEMP_DIR"
+                  mkdir -p "$LUCI_TEMP_DIR"
+                  cd "$LUCI_TEMP_DIR"
+                  
                   git init
-                  git remote add origin https://github.com/immortalwrt/luci.git
                   git config core.sparsecheckout true
                   echo "applications/$pkg" >> .git/info/sparse-checkout
-                  git pull --depth=1 origin master || git pull --depth=1 origin main
+                  git remote add origin https://github.com/immortalwrt/luci.git
+                  git pull --depth=1 origin master 2>/dev/null || git pull --depth=1 origin main 2>/dev/null || true
                   
                   if [ -d "applications/$pkg" ]; then
                     cp -r "applications/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/luci/applications/"
                   fi
                   
+                  rm -rf "$LUCI_TEMP_DIR"
                   cd /mnt/openwrt/openwrt-src
                 else
-                  mkdir -p /tmp/immortalwrt-packages
-                  cd /tmp/immortalwrt-packages
-                  git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git
-                  cd packages
+                  PKG_TEMP_DIR="/tmp/packages-$pkg-$(date +%s)"
+                  rm -rf "$PKG_TEMP_DIR"
+                  mkdir -p "$PKG_TEMP_DIR"
+                  cd "$PKG_TEMP_DIR"
                   
-                  for dir in net misc admin routing telephony; do
-                    if [ -d "$dir/$pkg" ]; then
-                      mkdir -p "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir"
-                      cp -r "$dir/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir/"
-                      break
-                    fi
-                  done
+                  git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git 2>/dev/null || true
+                  if [ -d packages ]; then
+                    cd packages
+                    
+                    for dir in net misc admin routing telephony; do
+                      if [ -d "$dir/$pkg" ]; then
+                        mkdir -p "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir"
+                        cp -r "$dir/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir/"
+                        break
+                      fi
+                    done
+                  fi
                   
+                  rm -rf "$PKG_TEMP_DIR"
                   cd /mnt/openwrt/openwrt-src
                 fi
               fi
@@ -278,6 +288,8 @@ jobs:
             主机名: OpenROS
             默认IP: 192.168.8.1
             技术支持: WeChat_CRZ | QQ: 83826988
+            
+            软件包: openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz
           files: ${{ github.workspace }}/release_assets/*
           draft: false
           prerelease: false
