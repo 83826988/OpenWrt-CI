@@ -58,7 +58,7 @@ jobs:
           echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
           echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
           sudo mkdir -p /mnt/openros
-          sudo chown -R runner:runner /mnt/openros
+          sudo chown -R $(whoami):$(whoami) /mnt/openros
 
       - name: 检出源码
         uses: actions/checkout@v4
@@ -79,7 +79,19 @@ jobs:
       - name: 配置和更新Feeds
         run: |
           cd /mnt/openros/openros-src
+          
+          echo "添加以下feeds到配置："
+          echo "${{ github.event.inputs.add_feeds }}"
+          
+          if [ -f feeds.conf.default ]; then
+            cp feeds.conf.default feeds.conf.default.backup
+          fi
+          
           echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
+          
+          echo "最终的feeds.conf.default内容："
+          cat feeds.conf.default
+          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -122,7 +134,10 @@ jobs:
               if [[ "$pkg" == luci-app-* ]]; then
                 app_name="${pkg#luci-app-}"
                 zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
-                echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
+                
+                if find feeds/luci -name "${zh_cn_pkg}.mk" -o -name "${zh_cn_pkg}" 2>/dev/null | grep -q .; then
+                  echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
+                fi
               fi
             done
           fi
