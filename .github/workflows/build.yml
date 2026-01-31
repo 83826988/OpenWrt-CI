@@ -17,7 +17,6 @@ on:
         description: '添加Feeds'
         required: false
         default: |
-          src-git argon https://github.com/jerrykuku/luci-theme-argon.git
           src-git immortalwrt_packages https://github.com/immortalwrt/packages.git;openwrt-21.02
           src-git immortalwrt_luci https://github.com/immortalwrt/luci.git;openwrt-21.02
         type: string
@@ -163,8 +162,6 @@ jobs:
               sed -i '/mirrors\.tuna\.tsinghua\.edu\.cn/!d' "$APK_DISTFEEDS_LIST"
             fi
           fi
-          
-          ./scripts/diffconfig.sh
 
       - name: 编译固件
         run: |
