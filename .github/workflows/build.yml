@@ -16,9 +16,6 @@ on:
       add_feeds:
         description: '添加Feeds'
         required: false
-        default: |
-          src-git immortalwrt_packages https://github.com/immortalwrt/packages.git
-          src-git immortalwrt_luci https://github.com/immortalwrt/luci.git
         type: string
       target:
         description: '设备架构'
@@ -80,16 +77,15 @@ jobs:
         run: |
           cd /mnt/openros/openros-src
           
-          echo "添加以下feeds到配置："
-          echo "${{ github.event.inputs.add_feeds }}"
-          
           if [ -f feeds.conf.default ]; then
             cp feeds.conf.default feeds.conf.default.backup
           fi
           
-          echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
+          if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
+            echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
+          fi
           
-          echo "最终的feeds.conf.default内容："
+          echo "feeds.conf.default内容："
           cat feeds.conf.default
           
           ./scripts/feeds update -a
