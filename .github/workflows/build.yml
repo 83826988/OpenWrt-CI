@@ -17,7 +17,6 @@ on:
         description: '添加Feeds'
         required: false
         default: |
-          src-git design https://github.com/cairongzeng/luci-theme-design.git
           src-git argon https://github.com/jerrykuku/luci-theme-argon.git
           src-git immortalwrt_packages https://github.com/immortalwrt/packages.git;openwrt-21.02
           src-git immortalwrt_luci https://github.com/immortalwrt/luci.git;openwrt-21.02
@@ -40,7 +39,7 @@ on:
       packages:
         description: '定制软件'
         required: false
-        default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-usb-printer luci-app-vlmcsd luci-theme-design'
+        default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-usb-printer luci-app-vlmcsd luci-theme-argon'
         type: string
 
 jobs:
@@ -58,13 +57,7 @@ jobs:
           echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
           echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
           echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
-          
-          PACKAGES_CLEANED=$(echo "${{ github.event.inputs.packages }}" | tr '\n' ' ' | xargs)
-          echo "PACKAGES=$PACKAGES_CLEANED" >> $GITHUB_ENV
-          
-          ADD_FEEDS_CLEANED=$(echo "${{ github.event.inputs.add_feeds }}" | sed 's/"/\\"/g' | sed "s/'/\\'/g")
-          echo "ADD_FEEDS=$ADD_FEEDS_CLEANED" >> $GITHUB_ENV
-          
+          echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
           sudo mkdir -p /mnt/openros
           sudo chown -R runner:runner /mnt/openros
 
@@ -87,18 +80,13 @@ jobs:
       - name: 配置和更新Feeds
         run: |
           cd /mnt/openros/openros-src
-          
-          if [ -n "${ADD_FEEDS}" ]; then
-            echo "${ADD_FEEDS}" >> feeds.conf.default
-          fi
-          
+          echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: 生成和修改配置
         run: |
           cd /mnt/openros/openros-src
-          set -e
           
           echo "CONFIG_TARGET_${TARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
@@ -108,7 +96,6 @@ jobs:
           
           echo "CONFIG_PACKAGE_luci=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-          
           echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
           echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
           echo 'CONFIG_VERSION_NICK="QQ | WeChat 83826988"' >> .config
@@ -116,8 +103,7 @@ jobs:
           echo 'CONFIG_DEFAULT_zh-cn=y' >> .config
           
           echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
-          echo 'CONFIG_LUCI_THEME="design"' >> .config
-          echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
+          echo 'CONFIG_LUCI_THEME="argon"' >> .config
           echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           
           echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
@@ -142,9 +128,6 @@ jobs:
               fi
             done
           fi
-          
-          echo 'CONFIG_PACKAGE_luci-theme-material=n' >> .config
-          echo 'CONFIG_PACKAGE_luci-theme-openwrt-2020=n' >> .config
           
           yes "" | make oldconfig
           
@@ -181,13 +164,11 @@ jobs:
             fi
           fi
           
-          echo "=== 配置差异 ==="
           ./scripts/diffconfig.sh
 
       - name: 编译固件
         run: |
           cd /mnt/openros/openros-src
-          set -e
           make download -j$(nproc) || make download -j1 V=s
           make -j$(nproc) V=sc
 
@@ -197,8 +178,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/release_assets
           cp -r /mnt/openros/openros-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
           
-          PACKAGES_DIR="/mnt/openros/openros-src/bin/packages"
-          if [ -d "$PACKAGES_DIR" ]; then
+          if [ -d "/mnt/openros/openros-src/bin/packages" ]; then
             cd /mnt/openros/openros-src/bin
             tar -czf ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz packages/
           fi
