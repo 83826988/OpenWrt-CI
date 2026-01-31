@@ -85,9 +85,6 @@ jobs:
             echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           fi
           
-          echo "feeds.conf.default内容："
-          cat feeds.conf.default
-          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -118,6 +115,21 @@ jobs:
           fi
           
           make defconfig
+          
+          echo "========== 最终.config文件内容 =========="
+          echo "配置文件大小: $(wc -l < .config) 行"
+          echo ""
+          echo "=== 重要配置项 ==="
+          grep -E "^(CONFIG_TARGET_|CONFIG_PACKAGE_luci|CONFIG_PACKAGE_$(echo "${PACKAGES}" | tr ' ' '|')|CONFIG_TARGET_HOSTNAME)" .config | head -50
+          echo ""
+          echo "=== 所有软件包配置 ==="
+          grep "^CONFIG_PACKAGE" .config | sort
+          echo ""
+          echo "=== 完整.config文件前100行 ==="
+          head -100 .config
+          echo ""
+          echo "=== 完整.config文件后100行 ==="
+          tail -100 .config
 
       - name: 编译固件
         run: |
@@ -130,6 +142,8 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/release_assets
           cp -r /mnt/openros/openros-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
+          
+          cp /mnt/openros/openros-src/.config ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-config-${{ env.BUILD_TIME }}
           
           if [ -d "/mnt/openros/openros-src/bin/packages" ]; then
             cd /mnt/openros/openros-src/bin
