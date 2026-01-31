@@ -17,8 +17,8 @@ on:
         description: '添加Feeds'
         required: false
         default: |
-          src-git immortalwrt_packages https://github.com/immortalwrt/packages.git;openwrt-21.02
-          src-git immortalwrt_luci https://github.com/immortalwrt/luci.git;openwrt-21.02
+          src-git packages https://github.com/openwrt/packages.git;openwrt-25.12
+          src-git luci https://github.com/openwrt/luci.git;openwrt-25.12
         type: string
       target:
         description: '设备架构'
@@ -103,7 +103,6 @@ jobs:
           
           echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
           echo 'CONFIG_LUCI_THEME="argon"' >> .config
-          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           
           echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
           echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
@@ -126,6 +125,10 @@ jobs:
                 echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
               fi
             done
+          fi
+          
+          if [[ ! "${PACKAGES}" =~ "luci-theme-argon" ]]; then
+            echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           fi
           
           yes "" | make oldconfig
