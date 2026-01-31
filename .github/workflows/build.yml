@@ -16,7 +16,11 @@ on:
       add_feeds:
         description: '添加Feeds'
         required: false
-        default: 'src-git design https://github.com/cairongzeng/luci-theme-design.git'
+        default: |
+          src-git design https://github.com/cairongzeng/luci-theme-design.git
+          src-git argon https://github.com/jerrykuku/luci-theme-argon.git
+          src-git immortalwrt_packages https://github.com/immortalwrt/packages.git;openwrt-21.02
+          src-git immortalwrt_luci https://github.com/immortalwrt/luci.git;openwrt-21.02
         type: string
       target:
         description: '设备架构'
@@ -36,7 +40,7 @@ on:
       packages:
         description: '定制软件'
         required: false
-        default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-tailscale-community luci-app-usb-printer luci-app-vlmcsd luci-theme-argon tailscale'
+        default: 'luci-app-arpbind luci-app-daed luci-app-diskman luci-app-eoip luci-app-ksmbd luci-app-usb-printer luci-app-vlmcsd luci-theme-design'
         type: string
 
 jobs:
@@ -54,10 +58,15 @@ jobs:
           echo "TARGET=${{ github.event.inputs.target }}" >> $GITHUB_ENV
           echo "SUBTARGET=${{ github.event.inputs.subtarget }}" >> $GITHUB_ENV
           echo "PROFILE=${{ github.event.inputs.profile }}" >> $GITHUB_ENV
-          echo "PACKAGES=${{ github.event.inputs.packages }}" >> $GITHUB_ENV
-          echo "ADD_FEEDS=${{ github.event.inputs.add_feeds }}" >> $GITHUB_ENV
-          sudo mkdir -p /mnt/openwrt
-          sudo chown -R runner:runner /mnt/openwrt
+          
+          PACKAGES_CLEANED=$(echo "${{ github.event.inputs.packages }}" | tr '\n' ' ' | xargs)
+          echo "PACKAGES=$PACKAGES_CLEANED" >> $GITHUB_ENV
+          
+          ADD_FEEDS_CLEANED=$(echo "${{ github.event.inputs.add_feeds }}" | sed 's/"/\\"/g' | sed "s/'/\\'/g")
+          echo "ADD_FEEDS=$ADD_FEEDS_CLEANED" >> $GITHUB_ENV
+          
+          sudo mkdir -p /mnt/openros
+          sudo chown -R runner:runner /mnt/openros
 
       - name: 检出源码
         uses: actions/checkout@v4
@@ -67,8 +76,8 @@ jobs:
 
       - name: 移动源码
         run: |
-          mv ${{ github.workspace }} /mnt/openwrt/openwrt-src
-          ln -sfn /mnt/openwrt/openwrt-src ${{ github.workspace }}
+          mv ${{ github.workspace }} /mnt/openros/openros-src
+          ln -sfn /mnt/openros/openros-src ${{ github.workspace }}
 
       - name: 安装编译工具
         run: |
@@ -77,78 +86,18 @@ jobs:
 
       - name: 配置和更新Feeds
         run: |
-          cd /mnt/openwrt/openwrt-src
+          cd /mnt/openros/openros-src
           
           if [ -n "${ADD_FEEDS}" ]; then
-            echo "${ADD_FEEDS}" | sed '/^$/d' >> feeds.conf.default
+            echo "${ADD_FEEDS}" >> feeds.conf.default
           fi
           
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          
-          if [ -n "${PACKAGES}" ]; then
-            CLEANED_PACKAGES=$(echo "${PACKAGES}" | xargs)
-            mkdir -p feeds/missing_packages/luci/applications
-            mkdir -p feeds/missing_packages/packages
-            
-            for pkg in $CLEANED_PACKAGES; do
-              [ -z "$pkg" ] && continue
-              
-              if ! ./scripts/feeds list | grep -q "^$pkg"; then
-                
-                if [[ "$pkg" == luci-app-* ]]; then
-                  LUCI_TEMP_DIR="/tmp/luci-$pkg-$(date +%s)"
-                  rm -rf "$LUCI_TEMP_DIR"
-                  mkdir -p "$LUCI_TEMP_DIR"
-                  cd "$LUCI_TEMP_DIR"
-                  
-                  git init
-                  git config core.sparsecheckout true
-                  echo "applications/$pkg" >> .git/info/sparse-checkout
-                  git remote add origin https://github.com/immortalwrt/luci.git
-                  git pull --depth=1 origin master 2>/dev/null || git pull --depth=1 origin main 2>/dev/null || true
-                  
-                  if [ -d "applications/$pkg" ]; then
-                    cp -r "applications/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/luci/applications/"
-                  fi
-                  
-                  rm -rf "$LUCI_TEMP_DIR"
-                  cd /mnt/openwrt/openwrt-src
-                else
-                  PKG_TEMP_DIR="/tmp/packages-$pkg-$(date +%s)"
-                  rm -rf "$PKG_TEMP_DIR"
-                  mkdir -p "$PKG_TEMP_DIR"
-                  cd "$PKG_TEMP_DIR"
-                  
-                  git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages.git 2>/dev/null || true
-                  if [ -d packages ]; then
-                    cd packages
-                    
-                    for dir in net misc admin routing telephony; do
-                      if [ -d "$dir/$pkg" ]; then
-                        mkdir -p "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir"
-                        cp -r "$dir/$pkg" "/mnt/openwrt/openwrt-src/feeds/missing_packages/packages/$dir/"
-                        break
-                      fi
-                    done
-                  fi
-                  
-                  rm -rf "$PKG_TEMP_DIR"
-                  cd /mnt/openwrt/openwrt-src
-                fi
-              fi
-            done
-            
-            if [ -n "$(find feeds/missing_packages -type f -name 'Makefile' 2>/dev/null | head -1)" ]; then
-              echo 'src-link missing_packages feeds/missing_packages' >> feeds.conf.default
-              ./scripts/feeds update missing_packages
-              ./scripts/feeds install -a
-            fi
-          fi
 
       - name: 生成和修改配置
         run: |
-          cd /mnt/openwrt/openwrt-src
+          cd /mnt/openros/openros-src
           set -e
           
           echo "CONFIG_TARGET_${TARGET}=y" >> .config
@@ -158,21 +107,25 @@ jobs:
           make defconfig
           
           echo "CONFIG_PACKAGE_luci=y" >> .config
-          echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh_Hans=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
           
           echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
           echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
           echo 'CONFIG_VERSION_NICK="QQ | WeChat 83826988"' >> .config
+          echo 'CONFIG_TARGET_TIMEZONE="CST-8"' >> .config
+          echo 'CONFIG_DEFAULT_zh-cn=y' >> .config
           
           echo 'CONFIG_PACKAGE_luci-theme-bootstrap=n' >> .config
           echo 'CONFIG_LUCI_THEME="design"' >> .config
           echo 'CONFIG_PACKAGE_luci-theme-design=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-i18n-design-zh_Hans=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           
           echo "CONFIG_BUSYBOX_DEFAULT_FEATURE_CHECK_UTF8=y" >> .config
           echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_SUPPORT=y" >> .config
           echo "CONFIG_BUSYBOX_DEFAULT_UNICODE_USING_LOCALE=y" >> .config
+          echo "CONFIG_SYSTEM_LOCALE_SUPPORT=y" >> .config
+          echo "CONFIG_SYSTEM_LOCALE_zh_CN_UTF8=y" >> .config
+          echo "CONFIG_PACKAGE_zh-cn=y" >> .config
           
           if [ -n "${PACKAGES}" ]; then
             CLEANED_PACKAGES=$(echo "${PACKAGES}" | xargs)
@@ -184,27 +137,18 @@ jobs:
               
               if [[ "$pkg" == luci-app-* ]]; then
                 app_name="${pkg#luci-app-}"
-                zh_Hans_pkg="luci-i18n-${app_name}-zh_Hans"
-                echo "CONFIG_PACKAGE_${zh_Hans_pkg}=y" >> .config
-              fi
-              
-              if [[ "$pkg" == luci-theme-* ]]; then
-                theme_name="${pkg#luci-theme-}"
-                zh_Hans_pkg="luci-i18n-${theme_name}-zh_Hans"
-                echo "CONFIG_PACKAGE_${zh_Hans_pkg}=y" >> .config
+                zh_cn_pkg="luci-i18n-${app_name}-zh-cn"
+                echo "CONFIG_PACKAGE_${zh_cn_pkg}=y" >> .config
               fi
             done
           fi
           
+          echo 'CONFIG_PACKAGE_luci-theme-material=n' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-openwrt-2020=n' >> .config
+          
           yes "" | make oldconfig
           
           sed -i "s/ipaddr='192\.168\.1\.1'/ipaddr='192.168.8.1'/" package/base-files/files/bin/config_generate
-          
-          CONFIG_GENERATE="package/base-files/files/bin/config_generate"
-          if [ -f "$CONFIG_GENERATE" ]; then
-            sed -i "s/set system\\.@system\\[-1\\]\\.hostname=.*/set system.@system[-1].hostname='OpenROS'/" "$CONFIG_GENERATE"
-            sed -i "/set system\.@system\[-1\]\.hostname=/s/.*/&\nset system.@system[-1].timezone='CST-8'\nset system.@system[-1].zonename='Asia\/Shanghai'/" "$CONFIG_GENERATE"
-          fi
           
           if [ -f "package/base-files/files/etc/immortalwrt_release" ] || grep -q 'DISTRIB_ID.*ImmortalWrt' "package/base-files/files/etc/os-release" 2>/dev/null; then
               REPO_TYPE="immortalwrt"
@@ -226,50 +170,36 @@ jobs:
             sed -i "s/PRETTY_NAME=.*/PRETTY_NAME='OpenROS'/" "$OS_RELEASE"
           fi
           
-          OPKG_DISTFEEDS_CONF="package/base-files/files/etc/opkg/distfeeds.conf"
-          if [ -f "$OPKG_DISTFEEDS_CONF" ]; then
-            sed -i '/downloads\.\(openwrt\|immortalwrt\)\.org/!{ /mirrors\.pku\.edu\.cn/!d }' "$OPKG_DISTFEEDS_CONF"
-            
-            if [ "$REPO_TYPE" = "immortalwrt" ]; then
-              sed -i "s|https://downloads\.immortalwrt\.org|https://mirrors.pku.edu.cn/immortalwrt|g" "$OPKG_DISTFEEDS_CONF"
-              sed -i "s|http://downloads\.immortalwrt\.org|https://mirrors.pku.edu.cn/immortalwrt|g" "$OPKG_DISTFEEDS_CONF"
-            else
-              sed -i "s|https://downloads\.openwrt\.org|https://mirrors.pku.edu.cn/openwrt|g" "$OPKG_DISTFEEDS_CONF"
-              sed -i "s|http://downloads\.openwrt\.org|https://mirrors.pku.edu.cn/openwrt|g" "$OPKG_DISTFEEDS_CONF"
-            fi
-          fi
-          
           APK_DISTFEEDS_LIST="package/base-files/files/etc/apk/repositories.d/distfeeds.list"
           if [ -f "$APK_DISTFEEDS_LIST" ]; then
-            sed -i '/downloads\.\(openwrt\|immortalwrt\)\.org/!{ /mirrors\.pku\.edu\.cn/!d }' "$APK_DISTFEEDS_LIST"
-            
             if [ "$REPO_TYPE" = "immortalwrt" ]; then
-              sed -i "s|https://downloads\.immortalwrt\.org|https://mirrors.pku.edu.cn/immortalwrt|g" "$APK_DISTFEEDS_LIST"
-              sed -i "s|http://downloads\.immortalwrt\.org|https://mirrors.pku.edu.cn/immortalwrt|g" "$APK_DISTFEEDS_LIST"
+              sed -i "s|https\?://downloads\.immortalwrt\.org|https://mirrors.pku.edu.cn/immortalwrt|g" "$APK_DISTFEEDS_LIST"
+              sed -i '/mirrors\.pku\.edu\.cn/!d' "$APK_DISTFEEDS_LIST"
             else
-              sed -i "s|https://downloads\.openwrt\.org|https://mirrors.pku.edu.cn/openwrt|g" "$APK_DISTFEEDS_LIST"
-              sed -i "s|http://downloads\.openwrt\.org|https://mirrors.pku.edu.cn/openwrt|g" "$APK_DISTFEEDS_LIST"
+              sed -i "s|https\?://downloads\.openwrt\.org|https://mirrors.tuna.tsinghua.edu.cn/openwrt|g" "$APK_DISTFEEDS_LIST"
+              sed -i '/mirrors\.tuna\.tsinghua\.edu\.cn/!d' "$APK_DISTFEEDS_LIST"
             fi
           fi
           
+          echo "=== 配置差异 ==="
           ./scripts/diffconfig.sh
 
       - name: 编译固件
         run: |
-          cd /mnt/openwrt/openwrt-src
+          cd /mnt/openros/openros-src
           set -e
           make download -j$(nproc) || make download -j1 V=s
-          make -j$(nproc) V=sc || make -j1 V=s
+          make -j$(nproc) V=sc
 
       - name: 准备发布
         if: success()
         run: |
           mkdir -p ${{ github.workspace }}/release_assets
-          cp -r /mnt/openwrt/openwrt-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
+          cp -r /mnt/openros/openros-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
           
-          PACKAGES_DIR="/mnt/openwrt/openwrt-src/bin/packages"
+          PACKAGES_DIR="/mnt/openros/openros-src/bin/packages"
           if [ -d "$PACKAGES_DIR" ]; then
-            cd /mnt/openwrt/openwrt-src/bin
+            cd /mnt/openros/openros-src/bin
             tar -czf ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz packages/
           fi
 
