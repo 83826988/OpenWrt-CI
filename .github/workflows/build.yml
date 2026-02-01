@@ -76,12 +76,16 @@ jobs:
       - name: 配置和更新Feeds
         run: |
           cd /mnt/openros/openros-src
+          
           if [ -f feeds.conf.default ]; then
             cp feeds.conf.default feeds.conf.default.backup
+            sed -i '/^src-git video/d' feeds.conf.default
           fi
+          
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           fi
+          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
