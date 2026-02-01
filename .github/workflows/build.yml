@@ -85,26 +85,28 @@ jobs:
             fi
           fi
           
-          cat > feeds.conf.default << 'EOF'
-src-git luci https://git.openwrt.org/project/luci.git^b10a6b5e
-EOF
+          echo "设置Feeds源..."
+          echo "src-git luci https://git.openwrt.org/project/luci.git^b10a6b5e" > feeds.conf.default
           
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" > feeds.conf.default
           fi
           
+          echo "当前feeds.conf.default内容："
+          cat feeds.conf.default
+          
           for i in {1..3}; do
             if ./scripts/feeds update -a; then
               break
             elif [ $i -eq 3 ]; then
-              echo "错误：Feeds 更新失败，流程终止"
+              echo "错误：Feeds更新失败，流程终止"
               exit 1
             fi
             sleep 15
           done
           
           if ! ./scripts/feeds install -a; then
-            echo "错误：Feeds 安装失败，流程终止"
+            echo "错误：Feeds安装失败，流程终止"
             exit 1
           fi
           
