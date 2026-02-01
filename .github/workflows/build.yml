@@ -129,30 +129,29 @@ jobs:
         run: |
           set -e
           cd /mnt/openros/openros-src
-          echo "开始非交互式菜单配置..."
-          expect << 'EOF'
+          echo "创建自动化配置脚本..."
+          cat > /tmp/configure.exp << 'SCRIPT_EOF'
 set timeout 30
 spawn make menuconfig
 expect "Arrow"
-# 导航到 LuCI -> Translations
 send "\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B"
 send "\033\[B\033\[B\033\[B\033\[B"
 send "\r"
 expect "Arrow"
-# 导航到 Chinese (ZH-CN)
 send "\033\[B"
 send "\033\[B"
 send " "
-# 选择中文包
 expect "Arrow"
 send "\r"
-# 保存并退出
-expect "Arrow"
 send "\033\[Z"
 expect "save"
 send "\r"
 expect eof
-EOF
+SCRIPT_EOF
+          
+          echo "安装expect工具并运行自动化配置..."
+          sudo apt-get install -y expect
+          expect /tmp/configure.exp
           echo "菜单配置完成。"
 
       - name: 追加自定义软件包
@@ -162,9 +161,7 @@ EOF
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              echo "尝试启用: ${pkg}"
               if ! make config "PACKAGE_${pkg}=y" 2>/dev/null; then
-                echo "注意: 包 ${pkg} 可能不存在，将尝试直接写入配置"
                 sed -i "/^CONFIG_PACKAGE_${pkg}=/d" .config 2>/dev/null || true
                 echo "CONFIG_PACKAGE_${pkg}=y" >> .config
               fi
@@ -181,17 +178,12 @@ EOF
           echo "- luci-i18n-base-zh-cn: ${CN_STATUS}"
           
           if [ "${CN_STATUS}" = "❌" ]; then
-            echo "执行最终强制补救：直接修改 .config 文件并锁定。"
-            # 移除所有可能的中文包相关配置行（注释或设置）
+            echo "执行最终强制补救..."
             sed -i '/^\(# \)\?CONFIG_PACKAGE_luci-i18n-base-zh-cn[ =]/d' .config
-            # 在文件末尾强制添加启用指令
             echo "" >> .config
             echo "# 强制启用中文语言包" >> .config
             echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-            # 再次运行 defconfig，但阻止其移除我们的强制项（如果支持该参数）
             make defconfig 2>/dev/null || true
-            # 最终确认
-            echo "补救后验证："
             grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo "状态: ✅ 成功" || echo "状态: ❌ 失败"
           fi
 
