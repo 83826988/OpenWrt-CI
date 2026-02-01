@@ -138,7 +138,7 @@ jobs:
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              if ! make config PACKAGE_${pkg}=y 2>/dev/null; then
+              if ! make config "PACKAGE_${pkg}=y" 2>/dev/null; then
                 echo "警告: 包 ${pkg} 启用失败，可能不存在或已被移除"
               fi
             done
