@@ -76,11 +76,9 @@ jobs:
       - name: 配置和更新Feeds
         run: |
           cd /mnt/openros/openros-src
-          
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           fi
-          
           for i in {1..3}; do
             if ./scripts/feeds update -a; then
               break
@@ -90,28 +88,21 @@ jobs:
             fi
             sleep 10
           done
-          
           ./scripts/feeds install -a
 
       - name: 生成配置
         run: |
           cd /mnt/openros/openros-src
-          
           rm -f .config .config.old
-          
-          cat > .config << EOF
-CONFIG_TARGET_${TARGET}=y
-CONFIG_TARGET_${TARGET}_${SUBTARGET}=y
-CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y
-CONFIG_TARGET_ROOTFS_INITRAMFS=n
-CONFIG_TARGET_ROOTFS_SQUASHFS=y
-CONFIG_TARGET_ROOTFS_EXT4FS=y
-CONFIG_TARGET_IMAGES_GZIP=y
-CONFIG_TARGET_ROOTFS_PARTSIZE=256
-EOF
-          
+          echo "CONFIG_TARGET_${TARGET}=y" > .config
+          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
+          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
+          echo "CONFIG_TARGET_ROOTFS_INITRAMFS=n" >> .config
+          echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
+          echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
+          echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=256" >> .config
           make defconfig
-          
           sed -i 's/CONFIG_TARGET_HOSTNAME=".*"/CONFIG_TARGET_HOSTNAME="OpenROS"/' .config
           sed -i 's/# CONFIG_PACKAGE_luci is not set/CONFIG_PACKAGE_luci=y/' .config
           sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
@@ -120,12 +111,10 @@ EOF
       - name: 定制软件配置
         run: |
           cd /mnt/openros/openros-src
-          
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
               pkg_config="CONFIG_PACKAGE_${pkg}"
-              
               if grep -q "^# ${pkg_config} is not set" .config; then
                 sed -i "s/# ${pkg_config} is not set/${pkg_config}=y/" .config
               elif ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
@@ -133,7 +122,6 @@ EOF
               fi
             done
           fi
-          
           make defconfig
 
       - name: 编译固件
