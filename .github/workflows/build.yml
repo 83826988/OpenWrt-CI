@@ -71,7 +71,7 @@ jobs:
       - name: 安装编译工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev
+          sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk gettext git default-jre-headless libacl1-dev libcap-dev libelf-dev libffi-dev libgmp-dev libisl-dev libjansson-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libssl-dev libtool libz-dev python3 python3-setuptools python3-pip python3-full rsync subversion swig time unzip wget zlib1g-dev libxml-parser-perl liblzma-dev liblzo2-dev zstd libzstd-dev libjson-c-dev libfuse-dev libpcre2-dev libpcre3-dev bison flex
 
       - name: 配置和更新Feeds
         run: |
@@ -79,7 +79,6 @@ jobs:
           
           if [ -f feeds.conf.default ]; then
             cp feeds.conf.default feeds.conf.default.backup
-            sed -i '/^src-git video/d' feeds.conf.default
             sed -i 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' feeds.conf.default
             sed -i 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' feeds.conf.default
             sed -i 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' feeds.conf.default
@@ -109,23 +108,32 @@ jobs:
           echo "CONFIG_TARGET_${TARGET}=y" > .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
+          
           if [ -d scripts/config ]; then
             rm -rf scripts/config
           fi
-          make scripts/config
-          make defconfig
-          ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
-          ./scripts/config --enable CONFIG_PACKAGE_luci
-          ./scripts/config --enable CONFIG_PACKAGE_luci-base
-          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
-          make defconfig
+          
+          make tools/install
+          make toolchain/install
+          make -C scripts/config conf mconf
+          
+          ./scripts/config/conf --defconfig=.config .config
+          
+          ./scripts/config/conf --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-base
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
+          
+          ./scripts/config/conf --defconfig=.config .config
+          
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              ./scripts/config --enable CONFIG_PACKAGE_${pkg}
+              ./scripts/config/conf --enable CONFIG_PACKAGE_${pkg}
             done
           fi
-          make defconfig
+          
+          ./scripts/config/conf --defconfig=.config .config
 
       - name: 编译固件
         run: |
