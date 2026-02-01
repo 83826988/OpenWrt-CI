@@ -108,9 +108,10 @@ jobs:
           sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
           sed -i 's/# CONFIG_PACKAGE_luci-i18n-base-zh-cn is not set/CONFIG_PACKAGE_luci-i18n-base-zh-cn=y/' .config
 
-      - name: 定制软件配置
+      - name: 定制软件
         run: |
           cd /mnt/openros/openros-src
+          
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
@@ -122,7 +123,32 @@ jobs:
               fi
             done
           fi
+          
           make defconfig
+          
+          echo "========== 配置验证 =========="
+          echo "目标: ${TARGET}/${SUBTARGET}/${PROFILE}"
+          echo ""
+          echo "关键包状态:"
+          echo "- luci: $(grep -q '^CONFIG_PACKAGE_luci=y' .config && echo '✅' || echo '❌')"
+          echo "- luci-base: $(grep -q '^CONFIG_PACKAGE_luci-base=y' .config && echo '✅' || echo '❌')"
+          echo "- luci-i18n-base-zh-cn: $(grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo '✅' || echo '❌')"
+          echo ""
+          echo "未生效的定制应用:"
+          if [ -n "${PACKAGES}" ]; then
+            for pkg in ${PACKAGES}; do
+              [ -z "$pkg" ] && continue
+              pkg_config="CONFIG_PACKAGE_${pkg}"
+              if ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
+                echo "❌ ${pkg}"
+              fi
+            done
+          else
+            echo "无"
+          fi
+          echo ""
+          echo "配置文件统计:"
+          echo "总配置行数: $(wc -l < .config)"
 
       - name: 编译固件
         run: |
