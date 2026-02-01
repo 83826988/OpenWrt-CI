@@ -98,12 +98,9 @@ jobs:
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
           
-          make defconfig
+          make scripts/config || make -C scripts/config
           
-          if [ -d scripts/config ]; then
-            rm -rf scripts/config
-            make scripts/config
-          fi
+          make defconfig
           
           ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
           
@@ -121,28 +118,6 @@ jobs:
           fi
           
           make defconfig
-          
-          echo "配置验证"
-          echo "目标: ${TARGET}/${SUBTARGET}/${PROFILE}"
-          echo ""
-          echo "关键包状态:"
-          echo "- luci: $(./scripts/config --state CONFIG_PACKAGE_luci | grep -q '^y$' && echo '✅' || echo '❌')"
-          echo "- luci-base: $(./scripts/config --state CONFIG_PACKAGE_luci-base | grep -q '^y$' && echo '✅' || echo '❌')"
-          echo "- luci-i18n-base-zh-cn: $(./scripts/config --state CONFIG_PACKAGE_luci-i18n-base-zh-cn | grep -q '^y$' && echo '✅' || echo '❌')"
-          echo ""
-          echo "用户自定义包中未生效的应用:"
-          if [ -n "${PACKAGES}" ]; then
-            for pkg in ${PACKAGES}; do
-              [ -z "$pkg" ] && continue
-              ./scripts/config --state CONFIG_PACKAGE_${pkg} | grep -q '^y$' || echo "❌ ${pkg}"
-            done
-          else
-            echo "无"
-          fi
-          
-          echo ""
-          echo "配置文件统计:"
-          echo "总配置行数: $(wc -l < .config)"
 
       - name: 编译固件
         run: |
