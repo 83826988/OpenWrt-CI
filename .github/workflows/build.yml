@@ -85,12 +85,12 @@ jobs:
             fi
           fi
           
+          cat > feeds.conf.default << 'EOF'
+src-git luci https://git.openwrt.org/project/luci.git^b10a6b5e
+EOF
+          
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" > feeds.conf.default
-          else
-            if ! grep -q "^src-git luci" feeds.conf.default; then
-              echo "src-git luci https://git.openwrt.org/project/luci.git^b10a6b5e" >> feeds.conf.default
-            fi
           fi
           
           for i in {1..3}; do
@@ -108,7 +108,14 @@ jobs:
             exit 1
           fi
           
-          ./scripts/feeds install luci-i18n-base-zh-cn || true
+          echo "=== 诊断可用的语言包 ==="
+          ./scripts/feeds list | grep i18n
+          echo "精确查找："
+          ./scripts/feeds list | grep luci-i18n-base-zh-cn
+          echo "查找所有中文包："
+          ./scripts/feeds list | grep -i zh
+          
+          ./scripts/feeds install luci-i18n-base-zh-cn 2>&1 | grep -v "already installed" || true
 
       - name: 生成并定制配置
         run: |
@@ -155,10 +162,14 @@ jobs:
           echo "- luci-lib-ipkg: $(grep -q '^CONFIG_PACKAGE_luci-lib-ipkg=y' .config && echo '✅' || echo '❌')"
           
           if ! grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config; then
-            echo "重新尝试启用中文包..."
-            ./scripts/feeds install luci-i18n-base-zh-cn 2>/dev/null || true
-            echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-            make defconfig 2>/dev/null || true
+            echo "检查实际可用的中文包名..."
+            ZH_PKG=$(./scripts/feeds list | grep -i "luci-i18n-base.*zh" | head -1 | awk '{print $1}')
+            if [ -n "${ZH_PKG}" ]; then
+              echo "找到替代包: ${ZH_PKG}"
+              ./scripts/feeds install ${ZH_PKG} 2>&1 | grep -v "already installed" || true
+              echo "CONFIG_PACKAGE_${ZH_PKG}=y" >> .config
+              make defconfig 2>/dev/null || true
+            fi
           fi
 
       - name: 编译固件
