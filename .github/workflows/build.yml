@@ -77,14 +77,6 @@ jobs:
         run: |
           cd /mnt/openros/openros-src
           
-          if [ -f feeds.conf.default ]; then
-            cp feeds.conf.default feeds.conf.default.backup
-            sed -i 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' feeds.conf.default
-            sed -i 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' feeds.conf.default
-            sed -i 's|https://git.openwrt.org/feed/routing.git|https://github.com/openwrt/routing.git|g' feeds.conf.default
-            sed -i 's|https://git.openwrt.org/feed/telephony.git|https://github.com/openwrt/telephony.git|g' feeds.conf.default
-          fi
-          
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           fi
@@ -101,27 +93,44 @@ jobs:
           
           ./scripts/feeds install -a
 
-      - name: 生成和修改配置
+      - name: 生成配置
         run: |
           cd /mnt/openros/openros-src
+          
           rm -f .config .config.old
-          echo "CONFIG_TARGET_${TARGET}=y" > .config
-          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
-          echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
+          
+          cat > .config << EOF
+CONFIG_TARGET_${TARGET}=y
+CONFIG_TARGET_${TARGET}_${SUBTARGET}=y
+CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=n
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_EXT4FS=y
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_TARGET_ROOTFS_PARTSIZE=256
+EOF
           
           make defconfig
           
-          ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
-          ./scripts/config --enable CONFIG_PACKAGE_luci
-          ./scripts/config --enable CONFIG_PACKAGE_luci-base
-          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
-          
-          make defconfig
+          sed -i 's/CONFIG_TARGET_HOSTNAME=".*"/CONFIG_TARGET_HOSTNAME="OpenROS"/' .config
+          sed -i 's/# CONFIG_PACKAGE_luci is not set/CONFIG_PACKAGE_luci=y/' .config
+          sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
+          sed -i 's/# CONFIG_PACKAGE_luci-i18n-base-zh-cn is not set/CONFIG_PACKAGE_luci-i18n-base-zh-cn=y/' .config
+
+      - name: 自定义软件包配置
+        run: |
+          cd /mnt/openros/openros-src
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              ./scripts/config --enable CONFIG_PACKAGE_${pkg}
+              pkg_config="CONFIG_PACKAGE_${pkg}"
+              
+              if grep -q "^# ${pkg_config} is not set" .config; then
+                sed -i "s/# ${pkg_config} is not set/${pkg_config}=y/" .config
+              elif ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
+                echo "${pkg_config}=y" >> .config
+              fi
             done
           fi
           
