@@ -109,31 +109,23 @@ jobs:
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
           
-          if [ -d scripts/config ]; then
-            rm -rf scripts/config
-          fi
+          make defconfig
           
-          make tools/install
-          make toolchain/install
-          make -C scripts/config conf mconf
+          ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
+          ./scripts/config --enable CONFIG_PACKAGE_luci
+          ./scripts/config --enable CONFIG_PACKAGE_luci-base
+          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
           
-          ./scripts/config/conf --defconfig=.config .config
-          
-          ./scripts/config/conf --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
-          ./scripts/config/conf --enable CONFIG_PACKAGE_luci
-          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-base
-          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
-          
-          ./scripts/config/conf --defconfig=.config .config
+          make defconfig
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              ./scripts/config/conf --enable CONFIG_PACKAGE_${pkg}
+              ./scripts/config --enable CONFIG_PACKAGE_${pkg}
             done
           fi
           
-          ./scripts/config/conf --defconfig=.config .config
+          make defconfig
 
       - name: 编译固件
         run: |
