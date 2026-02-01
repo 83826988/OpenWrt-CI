@@ -76,47 +76,38 @@ jobs:
       - name: 配置和更新Feeds
         run: |
           cd /mnt/openros/openros-src
-          
           if [ -f feeds.conf.default ]; then
             cp feeds.conf.default feeds.conf.default.backup
           fi
-          
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" >> feeds.conf.default
           fi
-          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: 生成和修改配置
         run: |
           cd /mnt/openros/openros-src
-          
           rm -f .config .config.old
-          
           echo "CONFIG_TARGET_${TARGET}=y" > .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
-          
-          make scripts/config || make -C scripts/config
-          
+          if [ -d scripts/config ]; then
+            rm -rf scripts/config
+          fi
+          make scripts/config
           make defconfig
-          
           ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
-          
           ./scripts/config --enable CONFIG_PACKAGE_luci
           ./scripts/config --enable CONFIG_PACKAGE_luci-base
           ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
-          
           make defconfig
-          
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
               ./scripts/config --enable CONFIG_PACKAGE_${pkg}
             done
           fi
-          
           make defconfig
 
       - name: 编译固件
@@ -130,9 +121,7 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/release_assets
           cp -r /mnt/openros/openros-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
-          
           cp /mnt/openros/openros-src/.config ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-config-${{ env.BUILD_TIME }}
-          
           if [ -d "/mnt/openros/openros-src/bin/packages" ]; then
             cd /mnt/openros/openros-src/bin
             tar -czf ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz packages/
