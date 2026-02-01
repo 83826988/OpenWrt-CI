@@ -116,30 +116,20 @@ jobs:
         run: |
           cd /mnt/openros/openros-src
           
-          sed -i '/^# CONFIG_PACKAGE_luci$/d' .config
-          sed -i '/^CONFIG_PACKAGE_luci/d' .config
-          echo "CONFIG_PACKAGE_luci=y" >> .config
+          if [ ! -x scripts/config ]; then
+            make scripts/config
+          fi
           
-          sed -i '/^# CONFIG_PACKAGE_luci-base$/d' .config
-          sed -i '/^CONFIG_PACKAGE_luci-base/d' .config
-          echo "CONFIG_PACKAGE_luci-base=y" >> .config
-          
-          sed -i '/^# CONFIG_PACKAGE_luci-i18n-base-zh-cn$/d' .config
-          sed -i '/^CONFIG_PACKAGE_luci-i18n-base-zh-cn/d' .config
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-          
-          sed -i '/^# CONFIG_PACKAGE_luci-lib-ipkg$/d' .config
-          sed -i '/^CONFIG_PACKAGE_luci-lib-ipkg/d' .config
-          echo "CONFIG_PACKAGE_luci-lib-ipkg=y" >> .config
+          ./scripts/config --enable CONFIG_PACKAGE_luci
+          ./scripts/config --enable CONFIG_PACKAGE_luci-base
+          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
+          ./scripts/config --enable CONFIG_PACKAGE_luci-lib-ipkg
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              pkg_config="CONFIG_PACKAGE_${pkg}"
               echo "尝试启用: ${pkg}"
-              sed -i "/^# ${pkg_config}$/d" .config
-              sed -i "/^${pkg_config}=/d" .config
-              echo "${pkg_config}=y" >> .config
+              ./scripts/config --enable CONFIG_PACKAGE_${pkg} 2>/dev/null || true
             done
           fi
           
@@ -154,15 +144,17 @@ jobs:
           echo "- luci-i18n-base-zh-cn: $(grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo '✅' || echo '❌')"
           echo "- luci-lib-ipkg: $(grep -q '^CONFIG_PACKAGE_luci-lib-ipkg=y' .config && echo '✅' || echo '❌')"
           echo ""
-          echo "未生效的定制应用:"
+          echo "定制应用状态:"
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
               pkg_config="CONFIG_PACKAGE_${pkg}"
-              if ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
-                echo "❌ ${pkg}"
+              if grep -q "^${pkg_config}=y" .config; then
+                echo "✅ ${pkg} (已启用)"
+              elif grep -q "^${pkg_config}=m" .config; then
+                echo "🔶 ${pkg} (模块化)"
               else
-                echo "✅ ${pkg}"
+                echo "❌ ${pkg} (未生效)"
               fi
             done
           else
