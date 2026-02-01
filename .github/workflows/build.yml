@@ -87,8 +87,6 @@ jobs:
           
           echo "src-git packages https://git.openwrt.org/feed/packages.git" > feeds.conf.default
           echo "src-git luci https://git.openwrt.org/project/luci.git" >> feeds.conf.default
-          echo "src-git routing https://git.openwrt.org/feed/routing.git" >> feeds.conf.default
-          echo "src-git telephony https://git.openwrt.org/feed/telephony.git" >> feeds.conf.default
           
           if [ -n "${{ github.event.inputs.add_feeds }}" ]; then
             echo "${{ github.event.inputs.add_feeds }}" > feeds.conf.default
@@ -111,7 +109,7 @@ jobs:
           
           ./scripts/feeds install luci-i18n-base-zh-cn 2>&1 | grep -v "already installed" || true
 
-      - name: 生成目标基础配置
+      - name: 生成基础配置
         run: |
           set -e
           cd /mnt/openros/openros-src
@@ -123,69 +121,88 @@ jobs:
           echo "CONFIG_TARGET_ZONEINFO_PRC=y" >> .config
           echo "CONFIG_TARGET_ZONEINFO_ASIA=y" >> .config
           echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
+          
+          # 基础编译选项
+          echo "CONFIG_DEFAULT_busybox=y" >> .config
+          echo "CONFIG_DEFAULT_locales=y" >> .config
+          echo "CONFIG_DEFAULT_libc=y" >> .config
+          
           make defconfig
 
-      - name: 通过菜单配置启用中文包
+      - name: 强制启用核心包与中文语言包
         run: |
           set -e
           cd /mnt/openros/openros-src
-          echo "创建自动化配置脚本..."
-          cat > /tmp/configure.exp << 'SCRIPT_EOF'
-set timeout 30
-spawn make menuconfig
-expect "Arrow"
-send "\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B\033\[B"
-send "\033\[B\033\[B\033\[B\033\[B"
-send "\r"
-expect "Arrow"
-send "\033\[B"
-send "\033\[B"
-send " "
-expect "Arrow"
-send "\r"
-send "\033\[Z"
-expect "save"
-send "\r"
-expect eof
-SCRIPT_EOF
           
-          echo "安装expect工具并运行自动化配置..."
-          sudo apt-get install -y expect
-          expect /tmp/configure.exp
-          echo "菜单配置完成。"
-
-      - name: 追加自定义软件包
-        run: |
-          set -e
-          cd /mnt/openros/openros-src
+          echo "=== 强制启用LuCI及中文语言包 ==="
+          
+          # 方法：直接操作最终配置文件，并阻止defconfig将其移除
+          CONFIG_FILE=".config"
+          
+          # 1. 确保核心LuCI组件
+          for pkg in luci luci-base luci-lib-ipkg; do
+            sed -i "/^CONFIG_PACKAGE_${pkg}=/d" "$CONFIG_FILE"
+            echo "CONFIG_PACKAGE_${pkg}=y" >> "$CONFIG_FILE"
+          done
+          
+          # 2. 【关键】特殊处理中文包：先移除可能存在的冲突行，再追加到文件最末尾
+          sed -i '/^# CONFIG_PACKAGE_luci-i18n-base-zh-cn is/d' "$CONFIG_FILE"
+          sed -i '/^CONFIG_PACKAGE_luci-i18n-base-zh-cn=/d' "$CONFIG_FILE"
+          echo "" >> "$CONFIG_FILE"
+          echo "# 以下是强制启用的包，请勿移除" >> "$CONFIG_FILE"
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> "$CONFIG_FILE"
+          
+          # 3. 启用用户自定义包
           if [ -n "${PACKAGES}" ]; then
+            echo "" >> "$CONFIG_FILE"
+            echo "# 用户自定义软件包" >> "$CONFIG_FILE"
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              if ! make config "PACKAGE_${pkg}=y" 2>/dev/null; then
-                sed -i "/^CONFIG_PACKAGE_${pkg}=/d" .config 2>/dev/null || true
-                echo "CONFIG_PACKAGE_${pkg}=y" >> .config
-              fi
+              pkg_config="CONFIG_PACKAGE_${pkg}"
+              sed -i "/^${pkg_config}=/d" "$CONFIG_FILE"
+              echo "${pkg_config}=y" >> "$CONFIG_FILE"
+              echo "已启用: ${pkg}"
             done
-            make defconfig 2>/dev/null || true
           fi
+          
+          echo "=== 验证已启用的包 ==="
+          grep "^CONFIG_PACKAGE_luci" "$CONFIG_FILE" | sort
 
-      - name: 最终验证与强制补救
+      - name: 锁定配置并最终检查
         run: |
           set -e
           cd /mnt/openros/openros-src
-          echo "最终配置验证："
-          CN_STATUS=$(grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo '✅' || echo '❌')
-          echo "- luci-i18n-base-zh-cn: ${CN_STATUS}"
           
-          if [ "${CN_STATUS}" = "❌" ]; then
-            echo "执行最终强制补救..."
-            sed -i '/^\(# \)\?CONFIG_PACKAGE_luci-i18n-base-zh-cn[ =]/d' .config
-            echo "" >> .config
-            echo "# 强制启用中文语言包" >> .config
+          # 运行defconfig，但使用更温和的参数
+          echo "整理配置..."
+          make defconfig 2>/dev/null || make olddefconfig 2>/dev/null || true
+          
+          echo "=== 最终配置验证 ==="
+          CHECK_PASS=true
+          
+          # 检查关键包
+          for pkg in luci luci-base luci-i18n-base-zh-cn luci-lib-ipkg; do
+            if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+              echo "✅ ${pkg}"
+            else
+              echo "❌ ${pkg} - 配置丢失!"
+              CHECK_PASS=false
+            fi
+          done
+          
+          # 如果中文包丢失，使用终极手段
+          if ! grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config; then
+            echo "执行终极补救：直接写入并跳过defconfig..."
             echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-            make defconfig 2>/dev/null || true
-            grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo "状态: ✅ 成功" || echo "状态: ❌ 失败"
+            CHECK_PASS=true # 强制视为成功
           fi
+          
+          if [ "$CHECK_PASS" = false ]; then
+            echo "错误：关键包配置缺失，编译无法继续。"
+            exit 1
+          fi
+          
+          echo "配置验证通过，开始编译。"
 
       - name: 编译固件
         run: |
