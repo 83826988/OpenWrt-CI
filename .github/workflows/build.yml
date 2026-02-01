@@ -102,20 +102,29 @@ jobs:
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
           echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=256" >> .config
+          echo "CONFIG_TARGET_HOSTNAME=\"OpenROS\"" >> .config
+          echo "CONFIG_TARGET_ZONEINFO_PRC=y" >> .config
+          echo "CONFIG_TARGET_ZONEINFO_ASIA=y" >> .config
+          echo "CONFIG_DEFAULT_busybox=y" >> .config
+          echo "CONFIG_BUSYBOX_DEFAULT_USE_BB_PWD_GRP=y" >> .config
+          echo "CONFIG_BUSYBOX_DEFAULT_USE_BB_SHADOW=y" >> .config
+          echo "CONFIG_DEFAULT_locales=y" >> .config
+          echo "CONFIG_DEFAULT_libc=y" >> .config
           make defconfig
-          sed -i 's/CONFIG_TARGET_HOSTNAME=".*"/CONFIG_TARGET_HOSTNAME="OpenROS"/' .config
-          sed -i 's/# CONFIG_PACKAGE_luci is not set/CONFIG_PACKAGE_luci=y/' .config
-          sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
-          sed -i 's/# CONFIG_PACKAGE_luci-i18n-base-zh-cn is not set/CONFIG_PACKAGE_luci-i18n-base-zh-cn=y/' .config
 
       - name: 定制软件
         run: |
           cd /mnt/openros/openros-src
           
+          sed -i 's/# CONFIG_PACKAGE_luci is not set/CONFIG_PACKAGE_luci=y/' .config
+          sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
+          sed -i 's/# CONFIG_PACKAGE_luci-i18n-base-zh-cn is not set/CONFIG_PACKAGE_luci-i18n-base-zh-cn=y/' .config
+          
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
               pkg_config="CONFIG_PACKAGE_${pkg}"
+              echo "尝试启用: ${pkg}"
               if grep -q "^# ${pkg_config} is not set" .config; then
                 sed -i "s/# ${pkg_config} is not set/${pkg_config}=y/" .config
               elif ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
