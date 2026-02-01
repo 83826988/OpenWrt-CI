@@ -135,15 +135,15 @@ jobs:
             exit 1
           fi
           
-          ./scripts/config --enable CONFIG_PACKAGE_luci
-          ./scripts/config --enable CONFIG_PACKAGE_luci-base
-          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
-          ./scripts/config --enable CONFIG_PACKAGE_luci-lib-ipkg
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-base
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
+          ./scripts/config/conf --enable CONFIG_PACKAGE_luci-lib-ipkg
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              if ! ./scripts/config --enable CONFIG_PACKAGE_${pkg} 2>/dev/null; then
+              if ! ./scripts/config/conf --enable CONFIG_PACKAGE_${pkg} 2>/dev/null; then
                 echo "警告: 包 ${pkg} 启用失败，可能不存在或已被移除"
               fi
             done
