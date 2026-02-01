@@ -116,20 +116,30 @@ jobs:
         run: |
           cd /mnt/openros/openros-src
           
-          sed -i 's/# CONFIG_PACKAGE_luci is not set/CONFIG_PACKAGE_luci=y/' .config
-          sed -i 's/# CONFIG_PACKAGE_luci-base is not set/CONFIG_PACKAGE_luci-base=y/' .config
-          sed -i 's/# CONFIG_PACKAGE_luci-i18n-base-zh-cn is not set/CONFIG_PACKAGE_luci-i18n-base-zh-cn=y/' .config
+          sed -i '/^# CONFIG_PACKAGE_luci$/d' .config
+          sed -i '/^CONFIG_PACKAGE_luci/d' .config
+          echo "CONFIG_PACKAGE_luci=y" >> .config
+          
+          sed -i '/^# CONFIG_PACKAGE_luci-base$/d' .config
+          sed -i '/^CONFIG_PACKAGE_luci-base/d' .config
+          echo "CONFIG_PACKAGE_luci-base=y" >> .config
+          
+          sed -i '/^# CONFIG_PACKAGE_luci-i18n-base-zh-cn$/d' .config
+          sed -i '/^CONFIG_PACKAGE_luci-i18n-base-zh-cn/d' .config
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+          
+          sed -i '/^# CONFIG_PACKAGE_luci-lib-ipkg$/d' .config
+          sed -i '/^CONFIG_PACKAGE_luci-lib-ipkg/d' .config
+          echo "CONFIG_PACKAGE_luci-lib-ipkg=y" >> .config
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
               pkg_config="CONFIG_PACKAGE_${pkg}"
               echo "尝试启用: ${pkg}"
-              if grep -q "^# ${pkg_config} is not set" .config; then
-                sed -i "s/# ${pkg_config} is not set/${pkg_config}=y/" .config
-              elif ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
-                echo "${pkg_config}=y" >> .config
-              fi
+              sed -i "/^# ${pkg_config}$/d" .config
+              sed -i "/^${pkg_config}=/d" .config
+              echo "${pkg_config}=y" >> .config
             done
           fi
           
@@ -142,6 +152,7 @@ jobs:
           echo "- luci: $(grep -q '^CONFIG_PACKAGE_luci=y' .config && echo '✅' || echo '❌')"
           echo "- luci-base: $(grep -q '^CONFIG_PACKAGE_luci-base=y' .config && echo '✅' || echo '❌')"
           echo "- luci-i18n-base-zh-cn: $(grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config && echo '✅' || echo '❌')"
+          echo "- luci-lib-ipkg: $(grep -q '^CONFIG_PACKAGE_luci-lib-ipkg=y' .config && echo '✅' || echo '❌')"
           echo ""
           echo "未生效的定制应用:"
           if [ -n "${PACKAGES}" ]; then
@@ -150,6 +161,8 @@ jobs:
               pkg_config="CONFIG_PACKAGE_${pkg}"
               if ! grep -q "^${pkg_config}=y" .config && ! grep -q "^${pkg_config}=m" .config; then
                 echo "❌ ${pkg}"
+              else
+                echo "✅ ${pkg}"
               fi
             done
           else
