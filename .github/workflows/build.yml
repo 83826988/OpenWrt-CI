@@ -92,44 +92,52 @@ jobs:
         run: |
           cd /mnt/openros/openros-src
           
-          echo "CONFIG_TARGET_${TARGET}=y" >> .config
+          rm -f .config .config.old
+          
+          echo "CONFIG_TARGET_${TARGET}=y" > .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
           
-          echo 'CONFIG_TARGET_HOSTNAME="OpenROS"' >> .config
+          make defconfig
           
-          echo "CONFIG_PACKAGE_luci=y" >> .config
-          echo "CONFIG_PACKAGE_luci-base=y" >> .config
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+          ./scripts/config --set-val CONFIG_TARGET_HOSTNAME "OpenROS"
           
-          echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-          echo "CONFIG_PACKAGE_luci-theme-bootstrap=n" >> .config
+          ./scripts/config --enable CONFIG_PACKAGE_luci
+          ./scripts/config --enable CONFIG_PACKAGE_luci-base
+          ./scripts/config --enable CONFIG_PACKAGE_luci-i18n-base-zh-cn
           
           make defconfig
           
           if [ -n "${PACKAGES}" ]; then
             for pkg in ${PACKAGES}; do
               [ -z "$pkg" ] && continue
-              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+              ./scripts/config --enable CONFIG_PACKAGE_${pkg}
             done
           fi
           
           make defconfig
           
-          echo "========== 最终.config文件内容 =========="
-          echo "配置文件大小: $(wc -l < .config) 行"
+          echo "========== 配置验证 =========="
+          echo "目标: ${TARGET}/${SUBTARGET}/${PROFILE}"
           echo ""
-          echo "=== 重要配置项 ==="
-          grep -E "^(CONFIG_TARGET_|CONFIG_PACKAGE_luci|CONFIG_PACKAGE_$(echo "${PACKAGES}" | tr ' ' '|')|CONFIG_TARGET_HOSTNAME)" .config | head -50
+          echo "关键包状态:"
+          echo "- luci: $(./scripts/config --state CONFIG_PACKAGE_luci | grep -q '^y$' && echo '✅' || echo '❌')"
+          echo "- luci-base: $(./scripts/config --state CONFIG_PACKAGE_luci-base | grep -q '^y$' && echo '✅' || echo '❌')"
+          echo "- luci-i18n-base-zh-cn: $(./scripts/config --state CONFIG_PACKAGE_luci-i18n-base-zh-cn | grep -q '^y$' && echo '✅' || echo '❌')"
           echo ""
-          echo "=== 所有软件包配置 ==="
-          grep "^CONFIG_PACKAGE" .config | sort
+          echo "用户自定义包中未生效的应用:"
+          if [ -n "${PACKAGES}" ]; then
+            for pkg in ${PACKAGES}; do
+              [ -z "$pkg" ] && continue
+              ./scripts/config --state CONFIG_PACKAGE_${pkg} | grep -q '^y$' || echo "❌ ${pkg}"
+            done
+          else
+            echo "无"
+          fi
+          
           echo ""
-          echo "=== 完整.config文件前100行 ==="
-          head -100 .config
-          echo ""
-          echo "=== 完整.config文件后100行 ==="
-          tail -100 .config
+          echo "配置文件统计:"
+          echo "总配置行数: $(wc -l < .config)"
 
       - name: 编译固件
         run: |
