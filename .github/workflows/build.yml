@@ -97,11 +97,6 @@ jobs:
           echo "CONFIG_TARGET_${TARGET}=y" > .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y" >> .config
           echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y" >> .config
-          echo "CONFIG_TARGET_ROOTFS_INITRAMFS=n" >> .config
-          echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
-          echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
-          echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
-          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=256" >> .config
           echo "CONFIG_TARGET_HOSTNAME=\"OpenROS\"" >> .config
           echo "CONFIG_TARGET_ZONEINFO_PRC=y" >> .config
           echo "CONFIG_TARGET_ZONEINFO_ASIA=y" >> .config
@@ -112,13 +107,17 @@ jobs:
           echo "CONFIG_DEFAULT_libc=y" >> .config
           make defconfig
 
+      - name: 修复配置工具
+        run: |
+          cd /mnt/openros/openros-src
+          if [ -d scripts/config ]; then
+            rm -rf scripts/config
+          fi
+          make scripts/config
+
       - name: 定制软件
         run: |
           cd /mnt/openros/openros-src
-          
-          if [ ! -x scripts/config ]; then
-            make scripts/config
-          fi
           
           ./scripts/config --enable CONFIG_PACKAGE_luci
           ./scripts/config --enable CONFIG_PACKAGE_luci-base
@@ -150,11 +149,11 @@ jobs:
               [ -z "$pkg" ] && continue
               pkg_config="CONFIG_PACKAGE_${pkg}"
               if grep -q "^${pkg_config}=y" .config; then
-                echo "✅ ${pkg} (已启用)"
+                echo "✅ ${pkg}"
               elif grep -q "^${pkg_config}=m" .config; then
-                echo "🔶 ${pkg} (模块化)"
+                echo "🔶 ${pkg}"
               else
-                echo "❌ ${pkg} (未生效)"
+                echo "❌ ${pkg}"
               fi
             done
           else
@@ -175,7 +174,7 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/release_assets
           cp -r /mnt/openros/openros-src/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/* ${{ github.workspace }}/release_assets/
-          cp /mnt/openros/openros-src/.config ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-config-${{ env.BUILD_TIME }}
+          cp /mnt/openros/openros-src/.config ${{ github.workspace }}/release_assets/${{ env.PROFILE }}.config
           if [ -d "/mnt/openros/openros-src/bin/packages" ]; then
             cd /mnt/openros/openros-src/bin
             tar -czf ${{ github.workspace }}/release_assets/openros-${{ env.PROFILE }}-packages-${{ env.BUILD_TIME }}.tar.gz packages/
