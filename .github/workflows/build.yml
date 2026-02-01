@@ -105,6 +105,7 @@ jobs:
           echo "CONFIG_BUSYBOX_DEFAULT_USE_BB_SHADOW=y" >> .config
           echo "CONFIG_DEFAULT_locales=y" >> .config
           echo "CONFIG_DEFAULT_libc=y" >> .config
+          echo 'CONFIG_VERSION_DIST="OpenROS"' >> .config
           make defconfig
 
       - name: 修复配置工具
