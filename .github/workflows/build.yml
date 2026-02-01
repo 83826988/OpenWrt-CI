@@ -130,24 +130,17 @@ jobs:
             echo "CONFIG_PACKAGE_luci-lib-ipkg=y"
           } > .config
           
+          if [ -n "${PACKAGES}" ]; then
+            for pkg in ${PACKAGES}; do
+              [ -z "$pkg" ] && continue
+              echo "CONFIG_PACKAGE_${pkg}=y" >> .config
+            done
+          fi
+          
           if ! make defconfig; then
             echo "错误：make defconfig失败，流程终止"
             exit 1
           fi
-          
-          if [ -n "${PACKAGES}" ]; then
-            for pkg in ${PACKAGES}; do
-              [ -z "$pkg" ] && continue
-              pkg_config="CONFIG_PACKAGE_${pkg}"
-              if grep -q "^${pkg_config}=" .config; then
-                sed -i "s/^${pkg_config}=.*$/${pkg_config}=y/" .config
-              else
-                echo -e "\n\n\n\n\n\n\n\n\n\n" | make config "${pkg_config}=y" 2>/dev/null || true
-              fi
-            done
-          fi
-          
-          make defconfig 2>/dev/null || true
           
           echo "配置验证："
           echo "- luci: $(grep -q '^CONFIG_PACKAGE_luci=y' .config && echo '✅' || echo '❌')"
@@ -156,10 +149,9 @@ jobs:
           echo "- luci-lib-ipkg: $(grep -q '^CONFIG_PACKAGE_luci-lib-ipkg=y' .config && echo '✅' || echo '❌')"
           
           if ! grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config; then
-            if ./scripts/feeds install luci-i18n-base-zh-cn 2>/dev/null; then
-              echo -e "\n\n\n\n\n" | make config "PACKAGE_luci-i18n-base-zh-cn=y" 2>/dev/null || true
-              make defconfig 2>/dev/null || true
-            fi
+            echo "严重错误：中文语言包配置丢失，编译无法继续。"
+            echo "请检查 feeds 中是否存在 'luci-i18n-base-zh-cn' 包。"
+            exit 1
           fi
 
       - name: 编译固件
